@@ -158,7 +158,8 @@ class Viewport:
         # Wave state
         wave_running = False
         wave_t0 = 0.0
-        wave_duration = sum(self.cfg["segments_m"].values()) / max(1e-6, self.speed)
+        self.wave_base_duration = sum(self.cfg["segments_m"].values()) / max(1e-6, self.speed)
+        self.kakon_wave_speed_factor = float(self.cfg.get("sim", {}).get("kakon_wave_speed_factor", 3.0))
 
         # Audio/light state machine (visualized only)
         state = "IDLE"  # IDLE -> SILENCE -> WAVE -> RESUME -> IDLE
@@ -172,6 +173,24 @@ class Viewport:
         def schedule_kakon(now: float) -> float:
             return now + max(3.0, random.gauss(mean_kakon, std_kakon))
         next_kakon_at = schedule_kakon(time.time())
+
+        # Prepare simple shishi-odoshi sound (procedural)
+        self.kakon_sound = None
+        try:
+            self.kakon_sound = self._make_kakon_sound()
+        except Exception:
+            self.kakon_sound = None
+
+        # Track active chirp audio channels to stop on SILENCE
+        self.active_channels: List[pygame.mixer.Channel] = []
+        # Concurrency and species gating after kakon
+        sim_cfg2 = self.cfg.get("sim", {})
+        self.max_concurrent_chirps = int(sim_cfg2.get("max_concurrent_chirps", 3))
+        self.species_keys = list(self.insect_params.keys()) or [
+            "aomatsumushi", "kutsuwa", "matsumushi", "umaoi", "koorogi", "kirigirisu", "suzumushi",
+        ]
+        self.resume_species_order: List[str] = []
+        self.resume_base_count = 3
 
         running = True
         while running:
@@ -190,6 +209,22 @@ class Viewport:
                 state = "SILENCE"
                 silence_until = now + max(0.1, float(self.cfg["wave"].get("pause_ms", 900)) / 1000.0)
                 next_kakon_at = schedule_kakon(now)
+                # play kakon sound and stop any active chirp sounds for immediate silence
+                if self.kakon_sound:
+                    try:
+                        ch = pygame.mixer.find_channel(True)
+                        if ch:
+                            ch.set_volume(0.9)
+                            ch.play(self.kakon_sound)
+                    except Exception:
+                        pass
+                if self.active_channels:
+                    for ch in self.active_channels:
+                        try:
+                            ch.stop()
+                        except Exception:
+                            pass
+                    self.active_channels.clear()
 
             # Transition SILENCE -> WAVE
             if state == "SILENCE" and now >= silence_until and not wave_running:
@@ -202,6 +237,7 @@ class Viewport:
             # Draw LEDs
             if wave_running:
                 t = now - wave_t0
+                wave_duration = max(1e-6, self.wave_base_duration / max(0.1, self.kakon_wave_speed_factor))
                 pos01 = min(1.0, t / wave_duration)
                 # Two-front wave: from both ends toward center
                 half_span = (self.total_leds - 1) / 2.0
@@ -235,20 +271,38 @@ class Viewport:
                 else:
                     amp_gate = 1.0
 
+                # Species gating across resume (start with 3-4 kinds, increase gradually)
+                if state == "SILENCE":
+                    allowed_species = set()
+                elif state == "RESUME":
+                    count = min(len(self.species_keys), self.resume_base_count + int((len(self.species_keys) - self.resume_base_count) * amp_gate))
+                    allowed_species = set(self.resume_species_order[:count])
+                else:
+                    allowed_species = set(self.species_keys)
+
+                # Limit concurrent chirps overall (single speaker aesthetics)
+                current_active = sum(1 for ins in self.insects if ins["active"])
+
                 for insect in self.insects:
                     # Schedule chirps (occasional)
                     if state == "IDLE" and not insect["active"] and now >= insect["next_t"]:
-                        insect["active"] = True
-                        insect["start_t"] = now
-                        period = max(0.1, insect["period"]) if insect["period"] else 0.2
-                        insect["next_t"] = now + random.uniform(insect["chirp_min"], insect["chirp_max"]) + period
-                        # trigger short sound
-                        snd = self.species_sounds.get(insect["sp_key"]) if self.species_sounds else None
-                        if snd:
-                            ch = pygame.mixer.find_channel(True)
-                            if ch:
-                                ch.set_volume(min(1.0, self.master_amp))
-                                ch.play(snd, maxtime=int(period * 1000))
+                        if current_active >= self.max_concurrent_chirps or insect["sp_key"] not in allowed_species:
+                            # Retry a bit later
+                            insect["next_t"] = now + random.uniform(insect["chirp_min"], insect["chirp_max"]) * 0.3
+                        else:
+                            insect["active"] = True
+                            insect["start_t"] = now
+                            period = max(0.1, insect["period"]) if insect["period"] else 0.2
+                            insect["next_t"] = now + random.uniform(insect["chirp_min"], insect["chirp_max"]) + period
+                            current_active += 1
+                            # trigger short sound
+                            snd = self.species_sounds.get(insect["sp_key"]) if self.species_sounds else None
+                            if snd:
+                                ch = pygame.mixer.find_channel(True)
+                                if ch:
+                                    ch.set_volume(min(1.0, self.master_amp))
+                                    ch.play(snd, maxtime=int(period * 1000))
+                                    self.active_channels.append(ch)
 
                     if insect["active"]:
                         t_local = now - insect["start_t"]
@@ -299,3 +353,28 @@ class Viewport:
             clock.tick(60)
 
         pygame.quit()
+
+    def _make_kakon_sound(self) -> pygame.mixer.Sound:
+        import numpy as np
+        import pygame.sndarray as sndarray
+        sr = 44100
+        # helper envelopes and tones
+        def env_decay(n, tau):
+            t = np.arange(n, dtype=np.float32)
+            return np.exp(-t / float(tau)).astype(np.float32)
+        def tone(freq, dur_s, amp=0.5):
+            n = int(sr * dur_s)
+            t = np.arange(n, dtype=np.float32) / sr
+            w = np.sin(2 * np.pi * freq * t).astype(np.float32)
+            return (amp * w)
+        # compose 'ka' then 'kon'
+        x1 = tone(220, 0.05, 0.9) * env_decay(int(sr * 0.05), 900)
+        gap = np.zeros(int(sr * 0.06), dtype=np.float32)
+        x2 = tone(1800, 0.03, 0.6) * env_decay(int(sr * 0.03), 300)
+        x = np.concatenate([x1, gap, x2]).astype(np.float32)
+        # click transient
+        if len(x) > 6:
+            x[:6] += np.array([1.0, -0.9, 0.7, -0.5, 0.3, -0.2], dtype=np.float32)
+        x = np.clip(x, -1.0, 1.0)
+        xi16 = (x * 32767).astype(np.int16)
+        return sndarray.make_sound(xi16)
