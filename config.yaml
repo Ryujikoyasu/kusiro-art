@@ -1,4 +1,4 @@
-serial_port: "/dev/tty.usbmodem14101"
+serial_port: "/dev/tty.usbmodem1101"
 baud: 115200
 leds_per_meter: 60
 segments_m:
@@ -16,14 +16,7 @@ wave:
 audio:
   device: "default"
   gain_master: -6.0
-  species:
-    - {id: "アオマツムシ", file: "assets/data/sound/trimmed/01.wav", gain: -10, pan: -0.7}
-    - {id: "クツワムシ", file: "assets/data/sound/trimmed/02.wav", gain: -6, pan: 0.7}
-    - {id: "マツムシ", file: "assets/data/sound/trimmed/03.wav", gain: -8,  pan: -0.5}
-    - {id: "ウマオイ", file: "assets/data/sound/trimmed/04.wav", gain: -12, pan: 0.5}
-    - {id: "コオロギ", file: "assets/data/sound/trimmed/05.wav", gain: -9, pan: -0.2}
-    - {id: "キリギリス", file: "assets/data/sound/trimmed/06.wav", gain: -9, pan: 0.2}
-    - {id: "スズムシ", file: "assets/data/sound/trimmed/07.wav", gain: -14, pan: 0.0}
+  overrides: {}
 detect:
   cam:
     roi: [0.55, 0.15, 0.4, 0.7]

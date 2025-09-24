@@ -42,6 +42,18 @@ def audio_check():
     engine.print_assets()
 
 
+@app.command("audio_sync")
+def audio_sync():
+    """Analyze insect sounds and write config/insect_config.py (INSECT_PARAMS)."""
+    # Import and run generator in-process to avoid subprocess complexity
+    try:
+        from audio_sync_generator import generate_insect_config  # type: ignore
+    except Exception as e:  # pragma: no cover
+        raise typer.BadParameter(f"Failed to import audio_sync_generator: {e}")
+    generate_insect_config()
+    typer.echo("Generated config/insect_config.py")
+
+
 @app.command()
 def kakon_watch():
     """Run camera-based kakon detector and send serial wave events."""
@@ -112,10 +124,23 @@ def config_set(key: str, value: str):
     typer.echo(f"Set {key} = {cur[parts[-1]]}")
 
 
+@app.command("config_insects")
+def config_insects():
+    """Show insect color base/accent and sound files from structure."""
+    try:
+        from config.config_structure import get_insect_base_config  # type: ignore
+    except Exception as e:
+        raise typer.BadParameter(f"Failed to import insect structure: {e}")
+    data = get_insect_base_config()
+    for key, v in data.items():
+        colors = v.get("colors", {})
+        sounds = v.get("sound_files", {})
+        typer.echo(f"{key}: base={colors.get('base')} accent={colors.get('accent')} files={sounds}")
+
+
 def main():  # python -m src.cli
     app()
 
 
 if __name__ == "__main__":
     main()
-
