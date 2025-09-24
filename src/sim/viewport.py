@@ -62,7 +62,8 @@ class Viewport:
         # Audio setup (pygame mixer)
         try:
             if not pygame.mixer.get_init():
-                pygame.mixer.init()
+                # 44.1kHz, 16-bit, mono to match generated kakon sound
+                pygame.mixer.init(frequency=44100, size=-16, channels=1)
             pygame.mixer.set_num_channels(64)
         except Exception:
             pass
@@ -160,12 +161,13 @@ class Viewport:
         wave_t0 = 0.0
         self.wave_base_duration = sum(self.cfg["segments_m"].values()) / max(1e-6, self.speed)
         self.kakon_wave_speed_factor = float(self.cfg.get("sim", {}).get("kakon_wave_speed_factor", 3.0))
+        self.effect_version = int(self.cfg.get("sim", {}).get("effect_version", 1))
 
         # Audio/light state machine (visualized only)
         state = "IDLE"  # IDLE -> SILENCE -> WAVE -> RESUME -> IDLE
         silence_until = 0.0
         resume_t0 = 0.0
-        resume_time = 2.0  # seconds to fade back lights
+        resume_time = float(self.cfg.get("sim", {}).get("resume_seconds", 6.0))
 
         # Kakon schedule
         mean_kakon = float(self.cfg.get("sim", {}).get("kakon_mean_s", 8.0))
@@ -185,12 +187,17 @@ class Viewport:
         self.active_channels: List[pygame.mixer.Channel] = []
         # Concurrency and species gating after kakon
         sim_cfg2 = self.cfg.get("sim", {})
-        self.max_concurrent_chirps = int(sim_cfg2.get("max_concurrent_chirps", 3))
+        # Back-compat: if old key exists, use it as total
+        if "max_concurrent_chirps" in sim_cfg2:
+            self.max_concurrent_total = int(sim_cfg2.get("max_concurrent_chirps", 12))
+        else:
+            self.max_concurrent_total = int(sim_cfg2.get("max_concurrent_total", 24))
+        self.max_concurrent_per_species = int(sim_cfg2.get("max_concurrent_per_species", 12))
         self.species_keys = list(self.insect_params.keys()) or [
             "aomatsumushi", "kutsuwa", "matsumushi", "umaoi", "koorogi", "kirigirisu", "suzumushi",
         ]
-        self.resume_species_order: List[str] = []
-        self.resume_base_count = 3
+        # Only 3 species active at a time (many individuals allowed). Reset each kakon.
+        self.current_species_set = set(random.sample(self.species_keys, min(3, len(self.species_keys))))
 
         running = True
         while running:
@@ -225,6 +232,8 @@ class Viewport:
                         except Exception:
                             pass
                     self.active_channels.clear()
+                # Choose 3 species for this session
+                self.current_species_set = set(random.sample(self.species_keys, min(3, len(self.species_keys))))
 
             # Transition SILENCE -> WAVE
             if state == "SILENCE" and now >= silence_until and not wave_running:
@@ -239,22 +248,31 @@ class Viewport:
                 t = now - wave_t0
                 wave_duration = max(1e-6, self.wave_base_duration / max(0.1, self.kakon_wave_speed_factor))
                 pos01 = min(1.0, t / wave_duration)
-                # Two-front wave: from both ends toward center
-                half_span = (self.total_leds - 1) / 2.0
-                front_offset = pos01 * half_span
-                c1 = front_offset
-                c2 = (self.total_leds - 1) - front_offset
-                for i, (x, y) in enumerate(pts):
-                    d1 = abs(i - c1)
-                    d2 = abs(i - c2)
-                    d = min(d1, d2)
-                    w = max(0.0, 1.0 - d / float(self.tail_leds))
-                    if w > 0:
-                        col = (
-                            int(ORANGE[0] * w),
-                            int(ORANGE[1] * w),
-                            int(ORANGE[2] * w),
-                        )
+                if self.effect_version == 1:
+                    # Two-front orange wave
+                    half_span = (self.total_leds - 1) / 2.0
+                    front_offset = pos01 * half_span
+                    c1 = front_offset
+                    c2 = (self.total_leds - 1) - front_offset
+                    for i, (x, y) in enumerate(pts):
+                        d1 = abs(i - c1)
+                        d2 = abs(i - c2)
+                        d = min(d1, d2)
+                        w = max(0.0, 1.0 - d / float(self.tail_leds))
+                        if w > 0:
+                            col = (
+                                int(ORANGE[0] * w),
+                                int(ORANGE[1] * w),
+                                int(ORANGE[2] * w),
+                            )
+                            pygame.draw.circle(screen, col, (x, y), 3)
+                else:
+                    # Calm blue glow: global fade in/out
+                    # Simple triangular envelope peaking mid-duration
+                    a = 1.0 - abs(2.0 * pos01 - 1.0)  # 0->1->0
+                    blue = (80, 140, 255)
+                    col = (int(blue[0] * a), int(blue[1] * a), int(blue[2] * a))
+                    for (x, y) in pts:
                         pygame.draw.circle(screen, col, (x, y), 3)
                 if pos01 >= 1.0:
                     wave_running = False
@@ -271,22 +289,27 @@ class Viewport:
                 else:
                     amp_gate = 1.0
 
-                # Species gating across resume (start with 3-4 kinds, increase gradually)
+                # Only 3 species are allowed throughout (until next kakon)
                 if state == "SILENCE":
                     allowed_species = set()
-                elif state == "RESUME":
-                    count = min(len(self.species_keys), self.resume_base_count + int((len(self.species_keys) - self.resume_base_count) * amp_gate))
-                    allowed_species = set(self.resume_species_order[:count])
                 else:
-                    allowed_species = set(self.species_keys)
+                    allowed_species = set(self.current_species_set)
 
-                # Limit concurrent chirps overall (single speaker aesthetics)
-                current_active = sum(1 for ins in self.insects if ins["active"])
+                # Limit concurrent chirps overall and per species; during RESUME grow gradually
+                total_active = sum(1 for ins in self.insects if ins["active"])
+                allowed_total = self.max_concurrent_total if state == "IDLE" else max(1, int(self.max_concurrent_total * max(0.1, amp_gate)))
+                # per-species counts
+                counts_by_sp: Dict[str, int] = {}
+                for ins in self.insects:
+                    if ins["active"]:
+                        counts_by_sp[ins["sp_key"]] = counts_by_sp.get(ins["sp_key"], 0) + 1
+                allowed_per_sp = self.max_concurrent_per_species if state == "IDLE" else max(1, int(self.max_concurrent_per_species * max(0.1, amp_gate)))
 
                 for insect in self.insects:
                     # Schedule chirps (occasional)
-                    if state == "IDLE" and not insect["active"] and now >= insect["next_t"]:
-                        if current_active >= self.max_concurrent_chirps or insect["sp_key"] not in allowed_species:
+                    if (state in ("IDLE", "RESUME")) and (not insect["active"]) and (now >= insect["next_t"]):
+                        sp = insect["sp_key"]
+                        if (total_active >= allowed_total) or (sp not in allowed_species) or (counts_by_sp.get(sp, 0) >= allowed_per_sp):
                             # Retry a bit later
                             insect["next_t"] = now + random.uniform(insect["chirp_min"], insect["chirp_max"]) * 0.3
                         else:
@@ -294,7 +317,8 @@ class Viewport:
                             insect["start_t"] = now
                             period = max(0.1, insect["period"]) if insect["period"] else 0.2
                             insect["next_t"] = now + random.uniform(insect["chirp_min"], insect["chirp_max"]) + period
-                            current_active += 1
+                            total_active += 1
+                            counts_by_sp[sp] = counts_by_sp.get(sp, 0) + 1
                             # trigger short sound
                             snd = self.species_sounds.get(insect["sp_key"]) if self.species_sounds else None
                             if snd:

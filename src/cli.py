@@ -89,20 +89,59 @@ def _run_wave_once(cfg, link: SerialLink):
 
 
 @app.command()
-def show(simulate: bool = typer.Option(True, "--simulate/--no-simulate")):
-    """Show the U-shape layout and simulate wave."""
+def show(
+    simulate: bool = typer.Option(True, "--simulate/--no-simulate"),
+    version: int = typer.Option(None, "--version", help="Effect version: 1=orange wave, 2=calm blue"),
+):
+    """Show the U-shape layout and simulate wave (version 1 or 2)."""
     cfg = load_config()
+    if version is not None:
+        cfg.setdefault("sim", {})
+        cfg["sim"]["effect_version"] = int(version)
     idx = build_u_shape_idx(cfg)
     vp = Viewport(cfg, idx)
     vp.run_simulation()
 
 
 @app.command()
-def run():
-    """Run real control (camera trigger + serial + audio)."""
+def run(version: int = typer.Option(None, "--version", help="Effect version: 1=orange wave, 2=calm blue")):
+    """Run real control (auto kakon + serial + audio), versioned effect."""
     from .main_real import run as run_real
+    run_real(effect_version=version)
 
-    run_real()
+
+@app.command()
+def trigger_once():
+    """Send a single wave immediately to the device (manual trigger)."""
+    cfg = load_config()
+    idx = build_u_shape_idx(cfg)
+    link = SerialLink(cfg)
+    total = len(idx)
+    speed = float(cfg["wave"]["speed_mps"])  # m/s
+    total_m = sum(cfg["segments_m"].values())
+    duration = total_m / max(1e-6, speed)
+    tail_m = float(cfg["wave"]["tail_m"])  # m
+    with link:
+        link.send_conf(total=total)
+        t0 = time.time()
+        while True:
+            t = time.time() - t0
+            pos = min(1.0, t / duration)
+            link.send_wave(pos=pos, tail_m=tail_m, bright=220)
+            if pos >= 1.0:
+                break
+            time.sleep(1 / 60.0)
+    typer.echo("Wave completed.")
+
+
+@app.command()
+def black():
+    """Turn all LEDs off on the device."""
+    cfg = load_config()
+    link = SerialLink(cfg)
+    with link:
+        link.black()
+    typer.echo("BLACK sent.")
 
 
 @app.command()

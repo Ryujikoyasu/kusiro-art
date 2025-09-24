@@ -22,16 +22,19 @@ detect:
     roi: [0.55, 0.15, 0.4, 0.7]
     angle_fire_deg: -25
     angle_release_deg: -15
-    min_interval_ms: 1500
+    min_interval_ms: 1600
   mic:
     threshold_db: -12
-    min_interval_ms: 1500
+    min_interval_ms: 1600
 fallback_trigger: true
 
 sim:
-  kakon_mean_s: 8.0
+  kakon_mean_s: 14.0
   kakon_std_s: 2.0
-  kakon_wave_speed_factor: 3.0
+  kakon_wave_speed_factor: 5.0
   chirp_interval_min_s: 3.0
   chirp_interval_max_s: 12.0
-  max_concurrent_chirps: 3
+  max_concurrent_total: 24
+  max_concurrent_per_species: 12
+  effect_version: 2   # 1=orange wave, 2=calm blue glow
+  resume_seconds: 6.0 # how slowly insects return after silence
