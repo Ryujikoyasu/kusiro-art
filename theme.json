@@ -1,0 +1,13 @@
+
+        {
+            "defaults": {
+                "colours": {
+                    "normal_text": "#c5d0e6",
+                    "dark_bg": "#1d212d"
+                }
+            },
+            "@status_label": {
+                "colours": { "normal_text": "#00FF00" }
+            }
+        }
+        

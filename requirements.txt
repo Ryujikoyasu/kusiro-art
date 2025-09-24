@@ -1,0 +1,15 @@
+# --- Core Simulation & Display ---
+pygame-ce
+numpy
+
+# --- Audio Analysis ---
+librosa
+
+# --- Hardware Communication ---
+pyserial
+
+# --- Path Generation Tool ---
+matplotlib
+
+# --- Settings Management ---
+PyYAMLnoise

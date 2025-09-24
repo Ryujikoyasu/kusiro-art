@@ -1,0 +1,36 @@
+serial_port: "/dev/tty.usbmodem14101"
+baud: 115200
+leds_per_meter: 60
+segments_m:
+  left: 9.5
+  bottom: 1.0
+  right: 9.5
+order: ["left_down", "bottom_right", "right_up"]
+reels: [5.0, 5.0, 5.0, 5.0]
+flip_reel: []
+wave:
+  speed_mps: 2.0
+  tail_m: 0.8
+  pause_ms: 900
+  easing: "quad_out"
+audio:
+  device: "default"
+  gain_master: -6.0
+  species:
+    - {id: "アオマツムシ", file: "assets/data/sound/trimmed/01.wav", gain: -10, pan: -0.7}
+    - {id: "クツワムシ", file: "assets/data/sound/trimmed/02.wav", gain: -6, pan: 0.7}
+    - {id: "マツムシ", file: "assets/data/sound/trimmed/03.wav", gain: -8,  pan: -0.5}
+    - {id: "ウマオイ", file: "assets/data/sound/trimmed/04.wav", gain: -12, pan: 0.5}
+    - {id: "コオロギ", file: "assets/data/sound/trimmed/05.wav", gain: -9, pan: -0.2}
+    - {id: "キリギリス", file: "assets/data/sound/trimmed/06.wav", gain: -9, pan: 0.2}
+    - {id: "スズムシ", file: "assets/data/sound/trimmed/07.wav", gain: -14, pan: 0.0}
+detect:
+  cam:
+    roi: [0.55, 0.15, 0.4, 0.7]
+    angle_fire_deg: -25
+    angle_release_deg: -15
+    min_interval_ms: 1500
+  mic:
+    threshold_db: -12
+    min_interval_ms: 1500
+fallback_trigger: true
