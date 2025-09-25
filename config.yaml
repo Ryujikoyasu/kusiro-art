@@ -1,40 +1,53 @@
-serial_port: "/dev/tty.usbmodem1101"
-baud: 115200
-leds_per_meter: 60
-segments_m:
+# Serial connection to Arduino (R4)
+serial_port: "/dev/tty.usbmodem1101"   # USB serial device path
+baud: 115200                             # Baudrate (match Arduino sketch; e.g. 921600)
+
+# Physical layout (U-shape 20m total)
+leds_per_meter: 60                       # LEDs per meter on the strip(s)
+segments_m:                              # Segment lengths in meters
   left: 9.5
   bottom: 1.0
   right: 9.5
-order: ["left_down", "bottom_right", "right_up"]
-reels: [5.0, 5.0, 5.0, 5.0]
-flip_reel: []
+order: ["left_down", "bottom_right", "right_up"]   # Wave order along U-shape
+reels: [5.0, 5.0, 5.0, 5.0]              # Physical reel lengths (m), for future mapping
+flip_reel: []                            # Optional: which reels are flipped
+
+# Wave parameters (used for effect_version 1 and timing elsewhere)
 wave:
-  speed_mps: 2.0
-  tail_m: 0.8
-  pause_ms: 900
-  easing: "quad_out"
+  speed_mps: 2.0                         # Wave propagation speed (meters/sec)
+  tail_m: 0.8                            # Visible tail length (meters)
+  pause_ms: 900                          # Silence duration before wave starts (ms)
+  easing: "quad_out"                     # Placeholder for easing type
+
+# Audio
 audio:
-  device: "default"
-  gain_master: -6.0
-  overrides: {}
+  device: "default"                      # Output device id/name (pygame mixer)
+  gain_master: -6.0                       # Master gain (dB)
+  overrides: {}                           # Optional per-species gain/pan overrides
+
+# Detection thresholds (camera/mic) – not strictly used in the sim runner
 detect:
   cam:
-    roi: [0.55, 0.15, 0.4, 0.7]
-    angle_fire_deg: -25
-    angle_release_deg: -15
-    min_interval_ms: 1600
+    roi: [0.55, 0.15, 0.4, 0.7]          # ROI as [x,y,w,h] in 0..1
+    angle_fire_deg: -25                   # Angle threshold to fire kakon
+    angle_release_deg: -15                # Hysteresis release threshold
+    min_interval_ms: 1600                 # Min interval between triggers
   mic:
-    threshold_db: -12
+    threshold_db: -12                     # Mic peak threshold (dB)
     min_interval_ms: 1600
-fallback_trigger: true
+fallback_trigger: true                    # Allow internal scheduler when detection unavailable
 
+# Simulation + behavior
 sim:
-  kakon_mean_s: 14.0
-  kakon_std_s: 2.0
-  kakon_wave_speed_factor: 5.0
-  chirp_interval_min_s: 3.0
-  chirp_interval_max_s: 12.0
-  max_concurrent_total: 24
-  max_concurrent_per_species: 12
-  effect_version: 2   # 1=orange wave, 2=calm blue glow
-  resume_seconds: 6.0 # how slowly insects return after silence
+  kakon_mean_s: 30.0                      # Mean interval (sec) between kakon events
+  kakon_std_s: 2.0                        # Std dev for kakon interval (sec)
+  kakon_wave_speed_factor: 5.0            # Wave speed multiplier during kakon (effect 1)
+  chirp_interval_min_s: 3.0               # Min interval (sec) for an individual to chirp
+  chirp_interval_max_s: 12.0              # Max interval (sec) for an individual to chirp
+  max_concurrent_total: 24                # Max simultaneous chirps overall (real runner)
+  max_concurrent_per_species: 12          # Max simultaneous chirps per species (real runner)
+  active_species_count: 2                 # Number of species active at a time (randomly chosen)
+  effect_version: 2                       # 1=orange wave, 2=calm blue glow
+  resume_seconds: 6.0                     # Time to ramp back after silence (sec)
+  calm_blue_rgb: [1, 1, 16]               # RGB for calm effect (effect_version 2)
+  calm_hold_s: 5.0                        # Hold calm blue duration after kakon (sec)

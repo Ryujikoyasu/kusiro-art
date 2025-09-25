@@ -4,15 +4,10 @@ import numpy as np
 INSECT_PARAMS = {
         'aomatsumushi': {
             'colors': {
-                'base': [
-                    50,
-                    200,
-                    180
-                ],
-                'accent': [
-                    120,
-                    255,
-                    230
+                'color': [
+                    12,
+                    20,
+                    77
                 ]
             },
             'chirp_pattern': {
@@ -62,15 +57,10 @@ INSECT_PARAMS = {
         },
         'kutsuwa': {
             'colors': {
-                'base': [
-                    255,
-                    80,
-                    20
-                ],
-                'accent': [
-                    255,
-                    140,
-                    60
+                'color': [
+                    66,
+                    22,
+                    3
                 ]
             },
             'chirp_pattern': {
@@ -188,15 +178,10 @@ INSECT_PARAMS = {
         },
         'matsumushi': {
             'colors': {
-                'base': [
-                    180,
-                    255,
-                    80
-                ],
-                'accent': [
-                    220,
-                    255,
-                    140
+                'color': [
+                    47,
+                    41,
+                    5
                 ]
             },
             'chirp_pattern': {
@@ -242,15 +227,10 @@ INSECT_PARAMS = {
         },
         'umaoi': {
             'colors': {
-                'base': [
-                    50,
-                    255,
-                    100
-                ],
-                'accent': [
-                    120,
-                    255,
-                    160
+                'color': [
+                    47,
+                    9,
+                    74
                 ]
             },
             'chirp_pattern': {
@@ -268,15 +248,10 @@ INSECT_PARAMS = {
         },
         'koorogi': {
             'colors': {
-                'base': [
-                    160,
-                    100,
-                    255
-                ],
-                'accent': [
-                    210,
-                    170,
-                    255
+                'color': [
+                    66,
+                    20,
+                    40
                 ]
             },
             'chirp_pattern': {
@@ -291,15 +266,10 @@ INSECT_PARAMS = {
         },
         'kirigirisu': {
             'colors': {
-                'base': [
-                    255,
-                    200,
-                    40
-                ],
-                'accent': [
-                    255,
-                    235,
-                    120
+                'color': [
+                    8,
+                    31,
+                    5
                 ]
             },
             'chirp_pattern': {
@@ -331,15 +301,10 @@ INSECT_PARAMS = {
         },
         'suzumushi': {
             'colors': {
-                'base': [
-                    200,
-                    220,
-                    255
-                ],
-                'accent': [
-                    230,
-                    240,
-                    255
+                'color': [
+                    0,
+                    14,
+                    9
                 ]
             },
             'chirp_pattern': {

@@ -8,6 +8,7 @@ from typing import Dict, List, Tuple, Any
 import os
 import importlib.util
 import pygame
+import numpy as np
 
 
 ORANGE = (255, 165, 0)
@@ -34,8 +35,11 @@ def _load_insect_params() -> Dict[str, Any]:
         return {}
 
 
+from ..serial_handler import SerialWriterThread
+
+
 class Viewport:
-    def __init__(self, cfg: Dict, layout_idx: List[Dict]):
+    def __init__(self, cfg: Dict, layout_idx: List[Dict], mirror_to_device: bool = False):
         self.cfg = cfg
         self.idx = layout_idx
         self.total_leds = len(layout_idx)
@@ -80,6 +84,19 @@ class Viewport:
                     self.species_sounds[sp_key] = pygame.mixer.Sound(p)
                 except Exception:
                     pass
+
+        # Optional hardware mirroring (MAGIC 0x7E frames)
+        self.mirror = mirror_to_device
+        self.serial_thread: SerialWriterThread | None = None
+        if self.mirror:
+            try:
+                port = cfg.get('serial_port')
+                baud = int(cfg.get('baud', 115200))
+                num_pixels = (self.total_leds + 2) // 3
+                self.serial_thread = SerialWriterThread(port, baud, 0x7E, num_pixels)
+                self.serial_thread.start()
+            except Exception:
+                self.serial_thread = None
 
     def _pos_for_index(self, entry: Dict) -> Tuple[int, int]:
         # Map into U-shape rectangle in screen space
@@ -129,8 +146,8 @@ class Viewport:
             end = start + group_size
             sp_key = species_keys[g % len(species_keys)]
             colors = self.insect_params.get(sp_key, {}).get("colors", {})
-            base = tuple(int(x) for x in colors.get("base", [200, 200, 200]))
-            accent = tuple(int(x) for x in colors.get("accent", [255, 255, 255]))
+            # support new single color or legacy base
+            base = tuple(int(x) for x in (colors.get("color") or colors.get("base", [200, 200, 200])))
             pattern = self.insect_params.get(sp_key, {}).get("chirp_pattern", {}).get("default", [])
             duration = 0.0
             if pattern:
@@ -145,8 +162,7 @@ class Viewport:
             self.insects.append({
                 "indices": list(range(start, end)),
                 "sp_key": sp_key,
-                "base": base,
-                "accent": accent,
+                "color": base,
                 "pattern": pattern,
                 "period": duration,
                 "active": False,
@@ -162,6 +178,9 @@ class Viewport:
         self.wave_base_duration = sum(self.cfg["segments_m"].values()) / max(1e-6, self.speed)
         self.kakon_wave_speed_factor = float(self.cfg.get("sim", {}).get("kakon_wave_speed_factor", 3.0))
         self.effect_version = int(self.cfg.get("sim", {}).get("effect_version", 1))
+        calm = self.cfg.get("sim", {}).get("calm_blue_rgb", [80, 140, 255])
+        self.calm_blue = (int(calm[0]), int(calm[1]), int(calm[2]))
+        self.calm_hold_s = float(self.cfg.get("sim", {}).get("calm_hold_s", 5.0))
 
         # Audio/light state machine (visualized only)
         state = "IDLE"  # IDLE -> SILENCE -> WAVE -> RESUME -> IDLE
@@ -196,8 +215,9 @@ class Viewport:
         self.species_keys = list(self.insect_params.keys()) or [
             "aomatsumushi", "kutsuwa", "matsumushi", "umaoi", "koorogi", "kirigirisu", "suzumushi",
         ]
-        # Only 3 species active at a time (many individuals allowed). Reset each kakon.
-        self.current_species_set = set(random.sample(self.species_keys, min(3, len(self.species_keys))))
+        # Only N species active at a time (many individuals allowed). Reset each kakon.
+        self.active_species_count = int(self.cfg.get("sim", {}).get("active_species_count", 2))
+        self.current_species_set = set(random.sample(self.species_keys, min(self.active_species_count, len(self.species_keys))))
 
         running = True
         while running:
@@ -232,8 +252,8 @@ class Viewport:
                         except Exception:
                             pass
                     self.active_channels.clear()
-                # Choose 3 species for this session
-                self.current_species_set = set(random.sample(self.species_keys, min(3, len(self.species_keys))))
+                # Choose N species for this session
+                self.current_species_set = set(random.sample(self.species_keys, min(self.active_species_count, len(self.species_keys))))
 
             # Transition SILENCE -> WAVE
             if state == "SILENCE" and now >= silence_until and not wave_running:
@@ -244,9 +264,15 @@ class Viewport:
             screen.fill((10, 10, 10))
 
             # Draw LEDs
+            # Prepare hardware frame buffer (per-LED RGB)
+            frame = np.zeros((self.total_leds, 3), dtype=np.uint8)
             if wave_running:
                 t = now - wave_t0
-                wave_duration = max(1e-6, self.wave_base_duration / max(0.1, self.kakon_wave_speed_factor))
+                # For effect 1 use wave duration, for effect 2 use calm_hold_s
+                if self.effect_version == 1:
+                    wave_duration = max(1e-6, self.wave_base_duration / max(0.1, self.kakon_wave_speed_factor))
+                else:
+                    wave_duration = max(1e-6, self.calm_hold_s)
                 pos01 = min(1.0, t / wave_duration)
                 if self.effect_version == 1:
                     # Two-front orange wave
@@ -267,13 +293,13 @@ class Viewport:
                             )
                             pygame.draw.circle(screen, col, (x, y), 3)
                 else:
-                    # Calm blue glow: global fade in/out
-                    # Simple triangular envelope peaking mid-duration
-                    a = 1.0 - abs(2.0 * pos01 - 1.0)  # 0->1->0
-                    blue = (80, 140, 255)
+                    # Calm blue glow: hold blue for calm_hold_s (no envelope)
+                    a = 1.0
+                    blue = self.calm_blue
                     col = (int(blue[0] * a), int(blue[1] * a), int(blue[2] * a))
-                    for (x, y) in pts:
+                    for i, (x, y) in enumerate(pts):
                         pygame.draw.circle(screen, col, (x, y), 3)
+                        frame[i] = col
                 if pos01 >= 1.0:
                     wave_running = False
                     state = "RESUME"
@@ -353,15 +379,27 @@ class Viewport:
 
                         if amp_gate > 0.0 and level > 0.0:
                             lv = max(0.0, min(1.0, float(level))) * amp_gate
-                            r = int(insect["base"][0] * (1 - lv) + insect["accent"][0] * lv)
-                            g = int(insect["base"][1] * (1 - lv) + insect["accent"][1] * lv)
-                            b = int(insect["base"][2] * (1 - lv) + insect["accent"][2] * lv)
-                            col = (r, g, b)
+                            col = (
+                                int(insect["color"][0] * lv),
+                                int(insect["color"][1] * lv),
+                                int(insect["color"][2] * lv),
+                            )
                             for led_i in insect["indices"]:
                                 x, y = pts[led_i]
                                 pygame.draw.circle(screen, col, (x, y), 3)
+                                frame[led_i] = col
 
             # Sounds are per-chirp; no global fade needed
+
+            # Mirror to device: convert per-LED frame to pixel buffer and send
+            if self.serial_thread is not None:
+                try:
+                    num_pixels = (self.total_leds + 2) // 3
+                    # Map LED i -> pixel i (Arduino expands each pixel to 3 LEDs)
+                    pixel_buf = frame[:num_pixels]
+                    self.serial_thread.send(pixel_buf)
+                except Exception:
+                    pass
 
             # HUD
             # We avoid font init for simplicity; draw a simple progress bar for next kakon
@@ -376,6 +414,14 @@ class Viewport:
             pygame.display.flip()
             clock.tick(60)
 
+        # On exit: send BLACK and close serial
+        if self.serial_thread is not None:
+            try:
+                self.serial_thread.send(np.zeros(((self.total_leds + 2)//3, 3), dtype=np.uint8))
+                time.sleep(0.1)
+                self.serial_thread.close()
+            except Exception:
+                pass
         pygame.quit()
 
     def _make_kakon_sound(self) -> pygame.mixer.Sound:

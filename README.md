@@ -1,79 +1,82 @@
-# お花の池、小鳥の森
+# 釧路イベント：秋の虫とシシオドシ（シミュ＋実機）
 
-![弟子屈での実演](assets/movie/demo.gif)
+本リポジトリは「秋の虫とシシオドシ」をテーマに、シミュレーションと実機LED/音を統合制御するための最小構成です。CLIからシミュ・実機・色ツールを操作できます。
 
-*▲ 弟子屈町での実際の動作風景。来場者の動きに反応して光の鳥が舞い踊る*
+## セットアップ
 
-弟子屈町のためのインタラクティブアート作品です。町花であるエゾイソツツジをモチーフに制作した蓄光オブジェを池に浮かべ、LEDテープとスピーカーで弟子屈らしい８種類の小鳥の存在を宿しました。
-
-来場者の動きを検知し、その存在が「小鳥」として表現される光と音の群れに影響を与えます。テクノロジーを通じて、**人と自然の、繊細で詩的な関わり合い**を体験していただくことを目指しています。
-
-## 🎯 こだわりポイント
-
-### シミュレーションと現実の100%同期
-WS2811 LEDテープ（3LED=1ピクセル）の制約に合わせてソフトウェアを設計。PC画面で見えるものが、そのまま物理世界で再現されます。楕円形の池の中心を原点とした座標系を設置し、LiDARとのキャリブレーションを実施。ガラスの浮き玉を座標が既知の場所に配置し、LEDテープの始点と終点を合わせることで、シミュレーション環境上のテープ配置と現実世界の配置の誤差を最小限に抑えました。
-
-### 光に「生命感」を宿すAI
-- **1D縄張り意識**: 鳥は2D空間を自由に動きながら、LEDテープ上での他の鳥との距離を監視。重なりを予測して回避することで、不自然な混色を防止
-
-### 創造性を支える自動化
-- **音と光の共演**: 音声解析により光の明滅パターンを自動生成
-- **アーティストの筆跡**: マウスで描いた曲線を物理制約に合わせて自動調整
-
-## 🚀 セットアップ
-
-### 1. 環境準備
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Arduino設定
-- Arduino Uno R4にFastLEDライブラリをインストール
-- `arduino/fastled.ino`で`NUM_PHYSICAL_LEDS`、`DATA_PIN`を設定
-- WS2811 LEDテープ用の設定でスケッチを書き込み
+Arduino 側（fastled.ino）を書き込み、`NUM_PHYSICAL_LEDS=1200`, `MAGIC_BYTE=0x7E` を維持。`baud` は `config.yaml` と一致させてください（推奨 921600）。
 
-### 3. プロジェクト設定
-`settings.yaml`でシリアルポートなど環境設定を調整
+## 主なコマンド
 
-### 4. ビルド手順（重要）
 ```bash
-# LEDレイアウト生成（初回・デザイン変更時）
-python scripts/artistic_path_generator.py
+# 実機シリアル確認
+python -m src.cli serial_ping
 
-# 設定ファイル生成（初回・音声/鳥パラメータ変更時）
-python scripts/audio_sync_generator.py
+# レイアウトJSON出力
+python -m src.cli layout_export
+
+# 音源/色を一覧
+python -m src.cli audio_check
+python -m src.cli config_insects
+
+# 音圧を均一化（EBU R128 loudnorm、元ファイルはバックアップに退避）
+python -m src.cli audio_normalize --dir assets/data/sound/trimmed --backup assets/data/sound/backup_originals \
+  --lufs -16 --tp -1.0 --lra 11 --bitrate 192k
+
+# シミュレーション（画面表示のみ / 実機ミラー送信あり）
+python -m src.cli show --version 1         # 橙の波
+python -m src.cli show --version 2         # 青い静寂
+python -m src.cli show --version 2 --mirror  # 画面と同じフレームを実機送信（MAGIC 0x7E）
+
+# 実機ランナー（自動カコン・音・LED）
+python -m src.cli run --version 1
+python -m src.cli run --version 2
+
+# 手動トリガ／全消灯
+python -m src.cli trigger_once
+python -m src.cli black
+
+# 色ツール（MAGIC 0x7E フレーム）
+python -m src.cli colors pick    # カラーホイールで直接送信
+python -m src.cli colors insect  # 種名を表示しつつ color を実機送信
 ```
 
-### 5. 実行
-```bash
-# シミュレーションのみ
-python main.py
+## 設定（config.yaml）
 
-# 物理LEDと連携
-python main_real.py
-```
+- `serial_port`: Arduino R4 のシリアルパス
+- `baud`: 通信速度（スケッチと一致）
+- `leds_per_meter`: LED 本数/メートル（60 推奨）
+- `segments_m`: U字の区間長（left/bottom/right）
+- `wave.speed_mps`: 波の伝播速度（version 1）
+- `wave.tail_m`: 波の余韻長（m）
+- `wave.pause_ms`: カコン検出後、波開始までの無音時間（ms）
+- `audio.gain_master`: 全体ゲイン（dB）
+- `sim.kakon_mean_s`/`kakon_std_s`: カコンの平均間隔/分散（秒）
+- `sim.kakon_wave_speed_factor`: カコン時の波速度倍率（version 1）
+- `sim.chirp_interval_min_s`/`max_s`: 個体の鳴き間隔範囲（秒）
+- `sim.max_concurrent_total`: 同時鳴き上限（全体）
+- `sim.max_concurrent_per_species`: 同時鳴き上限（種別）
+- `sim.active_species_count`: カコンごとに有効化する種数（ランダム選定）
+- `sim.effect_version`: 1=橙の波, 2=青い静寂
+- `sim.resume_seconds`: 静寂後の復帰にかける時間（秒）
+- `sim.calm_blue_rgb`: 青い静寂の色（RGB）
+- `sim.calm_hold_s`: 青い静寂の保持時間（秒）
 
-## 📁 アーキテクチャ
+## 振る舞い（概要）
 
-各コンポーネントが明確な役割を持つ「関心の分離」設計：
+- IDLE: 虫（100匹×12LED）が“たまに”鳴き、単色の輝度変化で明滅
+- SILENCE: カコンで即ミュート、effect_version に応じた静寂演出
+- WAVE/Calm: 橙波（v1）または青い静寂（v2）が進行/保持
+- RESUME: 鳴きは少数→多数へ徐々に復帰。同時鳴き上限は段階的に増加
 
-- **main.py**: オーケストラの指揮者
-- **objects.py**: 鳥・人間のAI
-- **simulation.py**: 物理世界の管理
-- **renderer.py**: 描画・表現ロジック
-- **input_source.py**: マウス・LiDAR入力の抽象化
-- **serial_handler.py**: Arduino通信（バックグラウンド処理）
-- **coordinates.py**: 座標変換の一元管理
+## ミラー送信について
 
-## 🎵 弟子屈らしい８種類の鳥たち
+`--mirror` 付きシミュレーションは、画面に描画した LED カラーをそのまま `MAGIC_BYTE(0x7E)` フレームで実機へ送信します。スケッチは 1ピクセル=3物理LED の展開で描画します。
 
-- **クマゲラ** (深い濃紺の光)
-- **オオハクチョウ** (純白の光)
-- **オジロワシ** (力強い黄金の光)
-- **タンチョウ** (優雅な赤と白)
-- **ベニマシコ** (温かな紅色)
-- **シマフクロウ** (神秘的な茶色)
-- **オルリ** (鮮やかな青)
-- **ノゴマ** (オレンジ色の光)
+## ライセンス
 
-それぞれ固有の色彩、鳴き声、行動パターンを持ち、音声解析による光の同期パターンも自動生成されます。
+プロジェクト固有の要件に従います。

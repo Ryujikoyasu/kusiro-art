@@ -46,8 +46,12 @@ def _insect_colors_from_params(params: Dict) -> Dict[str, tuple[int, int, int]]:
     }
     for key, v in params.items():
         jp = name_map.get(key, key)
-        base = tuple(int(x) for x in v.get("colors", {}).get("base", [200, 200, 200]))
-        out[jp] = base  # base color used for idle sparkle
+        col = v.get("colors", {}).get("color")
+        if col is None:
+            # legacy fallback to base
+            col = v.get("colors", {}).get("base", [200, 200, 200])
+        base = tuple(int(x) for x in col)
+        out[jp] = base
     return out
 
 

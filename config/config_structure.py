@@ -7,37 +7,37 @@ Contains 4 fields per species: colors(base,accent), chirp_pattern(auto), sound_f
 def get_insect_base_config():
     return {
         "aomatsumushi": {
-            "colors": {"base": [50, 200, 180], "accent": [120, 255, 230]},
+            "colors": {"color": [12, 20, 77]},
             "chirp_pattern": {},
             "sound_files": {"default": "assets/data/sound/trimmed/アオマツムシ.mp3"},
         },
         "kutsuwa": {
-            "colors": {"base": [255, 80, 20], "accent": [255, 140, 60]},
+            "colors": {"color": [66, 22, 3]},
             "chirp_pattern": {},
             "sound_files": {"default": "assets/data/sound/trimmed/クツワムシ.mp3"},
         },
         "matsumushi": {
-            "colors": {"base": [180, 255, 80], "accent": [220, 255, 140]},
+            "colors": {"color": [47, 41, 5]},
             "chirp_pattern": {},
             "sound_files": {"default": "assets/data/sound/trimmed/マツムシ.mp3"},
         },
         "umaoi": {
-            "colors": {"base": [50, 255, 100], "accent": [120, 255, 160]},
+            "colors": {"color": [47, 9, 74]},
             "chirp_pattern": {},
             "sound_files": {"default": "assets/data/sound/trimmed/ウマオイ.mp3"},
         },
         "koorogi": {
-            "colors": {"base": [160, 100, 255], "accent": [210, 170, 255]},
+            "colors": {"color": [66, 20, 40]},
             "chirp_pattern": {},
             "sound_files": {"default": "assets/data/sound/trimmed/コオロギ.mp3"},
         },
         "kirigirisu": {
-            "colors": {"base": [255, 200, 40], "accent": [255, 235, 120]},
+            "colors": {"color": [8, 31, 5]},
             "chirp_pattern": {},
             "sound_files": {"default": "assets/data/sound/trimmed/キリギリス.mp3"},
         },
         "suzumushi": {
-            "colors": {"base": [200, 220, 255], "accent": [230, 240, 255]},
+            "colors": {"color": [0, 14, 9]},
             "chirp_pattern": {},
             "sound_files": {"default": "assets/data/sound/trimmed/スズムシ.mp3"},
         },

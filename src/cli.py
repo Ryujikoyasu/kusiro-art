@@ -11,6 +11,8 @@ from .util.config import load_config, save_config
 
 
 app = typer.Typer(add_completion=False, help="Kushiro insect system CLI")
+colors_app = typer.Typer(help="Color utilities")
+app.add_typer(colors_app, name="colors")
 
 
 @app.command()
@@ -54,6 +56,24 @@ def audio_sync():
     typer.echo("Generated config/insect_config.py")
 
 
+@app.command("audio_normalize")
+def audio_normalize(
+    directory: str = typer.Option("assets/data/sound/trimmed", "--dir", help="Directory containing mp3s"),
+    backup: str = typer.Option("assets/data/sound/backup_originals", "--backup", help="Backup directory for originals"),
+    lufs: float = typer.Option(-16.0, help="Target integrated loudness (LUFS) e.g. -16"),
+    tp: float = typer.Option(-1.0, help="True peak target (dBFS) e.g. -1.0"),
+    lra: float = typer.Option(11.0, help="Loudness range target (LU)"),
+    bitrate: str = typer.Option("192k", help="Output bitrate for mp3 re-encode"),
+):
+    """Normalize loudness of mp3s in a directory. Backs up originals, overwrites in place."""
+    try:
+        from .tools.normalize_audio import normalize_dir  # type: ignore
+    except Exception as e:
+        raise typer.BadParameter(f"Could not import normalizer: {e}")
+    normalize_dir(Path(directory), Path(backup), I=lufs, TP=tp, LRA=lra, bitrate=bitrate)
+    typer.echo(f"Normalized mp3s in {directory}. Backups in {backup}.")
+
+
 @app.command()
 def kakon_watch():
     """Run camera-based kakon detector and send serial wave events."""
@@ -92,6 +112,7 @@ def _run_wave_once(cfg, link: SerialLink):
 def show(
     simulate: bool = typer.Option(True, "--simulate/--no-simulate"),
     version: int = typer.Option(None, "--version", help="Effect version: 1=orange wave, 2=calm blue"),
+    mirror: bool = typer.Option(False, "--mirror", help="Mirror frames to device via MAGIC_BYTE"),
 ):
     """Show the U-shape layout and simulate wave (version 1 or 2)."""
     cfg = load_config()
@@ -99,7 +120,7 @@ def show(
         cfg.setdefault("sim", {})
         cfg["sim"]["effect_version"] = int(version)
     idx = build_u_shape_idx(cfg)
-    vp = Viewport(cfg, idx)
+    vp = Viewport(cfg, idx, mirror_to_device=mirror)
     vp.run_simulation()
 
 
@@ -144,6 +165,32 @@ def black():
     typer.echo("BLACK sent.")
 
 
+@colors_app.command("pick")
+def colors_pick():
+    """Open the color wheel picker and send color to device (MAGIC_BYTE)."""
+    # Dynamically import root script
+    import importlib.util, sys, pathlib
+    root = pathlib.Path(__file__).resolve().parents[2]
+    path = root / "color_wheel_picker.py"
+    spec = importlib.util.spec_from_file_location("color_wheel_picker", str(path))
+    if not spec or not spec.loader:
+        raise typer.BadParameter("Could not load color_wheel_picker.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["color_wheel_picker"] = mod
+    spec.loader.exec_module(mod)  # type: ignore
+    if hasattr(mod, "interactive_color_picker"):
+        mod.interactive_color_picker()
+    else:
+        raise typer.BadParameter("interactive_color_picker() not found")
+
+
+@colors_app.command("insect")
+def colors_insect():
+    """Show insect names and base/accent colors, send to device (MAGIC_BYTE)."""
+    from .tools.insect_color_tester import run as run_tester
+    run_tester()
+
+
 @app.command()
 def config_set(key: str, value: str):
     """Set a config key to a value (dot notation supported)."""
@@ -165,7 +212,7 @@ def config_set(key: str, value: str):
 
 @app.command("config_insects")
 def config_insects():
-    """Show insect color base/accent and sound files from structure."""
+    """Show insect color and sound files from structure."""
     try:
         from config.config_structure import get_insect_base_config  # type: ignore
     except Exception as e:
@@ -174,7 +221,8 @@ def config_insects():
     for key, v in data.items():
         colors = v.get("colors", {})
         sounds = v.get("sound_files", {})
-        typer.echo(f"{key}: base={colors.get('base')} accent={colors.get('accent')} files={sounds}")
+        col = colors.get('color') or colors.get('base')
+        typer.echo(f"{key}: color={col} files={sounds}")
 
 
 def main():  # python -m src.cli

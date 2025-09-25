@@ -3,32 +3,25 @@
 import pygame
 import numpy as np
 import os
-import yaml
 import colorsys
 import time
 from src.serial_handler import SerialWriterThread
+from src.util.config import load_config
 
-# --- 設定ファイルの読み込み (変更なし) ---
+# --- 設定の読み込み（config.yaml を使用） ---
 try:
-    PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-    SETTINGS_PATH = os.path.join(PROJECT_ROOT, "settings.yaml")
-    with open(SETTINGS_PATH, 'r', encoding='utf-8') as f:
-        settings = yaml.safe_load(f)
-    
-    SERIAL_PORT = settings['serial_port']
-    BAUD_RATE = settings['baud_rate']
-    NUM_LEDS = settings['num_leds']
-    ENABLE_TEST_MODE = settings.get('enable_test_mode', False)
-    NUM_TEST_STRIP_LEDS = settings.get('test_strip_led_count', 100)
-    NUM_ACTIVE_LEDS = NUM_TEST_STRIP_LEDS if ENABLE_TEST_MODE else NUM_LEDS
-    NUM_ACTIVE_PIXELS = NUM_ACTIVE_LEDS // 3
+    cfg = load_config()
+    SERIAL_PORT = cfg.get('serial_port')
+    BAUD_RATE = int(cfg.get('baud', 115200))
+    leds_per_m = int(cfg.get('leds_per_meter', 60))
+    seg = cfg.get('segments_m', {"left": 9.5, "bottom": 1.0, "right": 9.5})
+    NUM_ACTIVE_LEDS = int(round((float(seg['left']) + float(seg['bottom']) + float(seg['right'])) * leds_per_m))
+    NUM_ACTIVE_PIXELS = (NUM_ACTIVE_LEDS + 2) // 3
     MAGIC_BYTE = 0x7E
-    VIEW_WIDTH = settings.get('view_width', 800)
-    VIEW_HEIGHT = settings.get('view_height', 800)
-    
+    VIEW_WIDTH, VIEW_HEIGHT = 900, 700
 except Exception as e:
-    print(f"FATAL: Error loading settings from 'settings.yaml'. Error: {e}")
-    exit()
+    print(f"FATAL: Error loading settings from 'config.yaml'. Error: {e}")
+    raise
 
 def create_color_wheel(diameter):
     """(変更なし)"""
@@ -48,7 +41,7 @@ def interactive_color_picker():
     pygame.init()
     pygame.font.init()
     screen = pygame.display.set_mode((VIEW_WIDTH, VIEW_HEIGHT))
-    pygame.display.set_caption("Color Picker with Brightness Slider")
+    pygame.display.set_caption("Color Picker with Brightness Slider (MAGIC 0x7E)")
     font = pygame.font.Font(None, 36)
     font_small = pygame.font.Font(None, 28)
     clock = pygame.time.Clock()

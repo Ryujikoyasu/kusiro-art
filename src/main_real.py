@@ -108,11 +108,14 @@ def run(effect_version: int | None = None):
     max_per_sp = int(simcfg.get("max_concurrent_per_species", 12))
     mean_kakon = float(simcfg.get("kakon_mean_s", 8.0))
     std_kakon = float(simcfg.get("kakon_std_s", 2.0))
+    calm_blue = tuple(int(x) for x in simcfg.get("calm_blue_rgb", [80, 140, 255]))
+    calm_hold = float(simcfg.get("calm_hold_s", 5.0))
 
     species_keys = list(insect_params.keys()) or [
         "aomatsumushi", "kutsuwa", "matsumushi", "umaoi", "koorogi", "kirigirisu", "suzumushi",
     ]
-    current_species = set(random.sample(species_keys, min(3, len(species_keys))))
+    active_species_count = int(simcfg.get("active_species_count", 2))
+    current_species = set(random.sample(species_keys, min(active_species_count, len(species_keys))))
 
     # Prepare kakon sound
     kakon_sound = _make_kakon_sound()
@@ -172,15 +175,12 @@ def run(effect_version: int | None = None):
                             time.sleep(1 / 60.0)
                     else:
                         # Calm blue glow: fill blue, hold, then black
-                        blue = (60, 120, 255)
-                        # Set once (1200 SET lines). Acceptable per-event.
                         for i in range(total):
-                            link.set_pixel(i, blue[0], blue[1], blue[2])
-                        hold = duration
-                        time.sleep(hold)
+                            link.set_pixel(i, calm_blue[0], calm_blue[1], calm_blue[2])
+                        time.sleep(calm_hold)
                         link.black()
-                    # pick new 3 species for next session
-                    current_species = set(random.sample(species_keys, min(3, len(species_keys))))
+                    # pick new N species for next session
+                    current_species = set(random.sample(species_keys, min(active_species_count, len(species_keys))))
                     state = "RESUME"
                     resume_t0 = time.time()
                 # During RESUME/IDLE: schedule chirps
