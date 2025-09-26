@@ -10,6 +10,9 @@ import pygame
 from .util.config import load_config
 from .led.mapper import build_u_shape_idx
 from .led.serial_link import SerialLink
+from .detect.factory import build_detector
+import queue
+import threading
 
 
 def _load_insect_params() -> Dict:
@@ -123,6 +126,25 @@ def run(effect_version: int | None = None):
     def schedule_kakon(now: float) -> float:
         return now + max(3.0, random.gauss(mean_kakon, std_kakon))
 
+    # Optional external detector (mic/cam) replacing internal scheduler
+    det_mode = str(cfg.get("detect", {}).get("mode", "timer")).lower()
+    detector = None
+    det_queue: "queue.Queue[bool]" = queue.Queue()
+    if det_mode != "timer":
+        try:
+            detector = build_detector(cfg)
+        except Exception as e:
+            print(f"Detector failed to initialize: {e}")
+            detector = None
+        if detector is not None:
+            def _det_thread():
+                try:
+                    for _ in detector.watch():
+                        det_queue.put_nowait(True)
+                except Exception as e:
+                    print(f"Detector stopped: {e}")
+            threading.Thread(target=_det_thread, daemon=True).start()
+
     # Keep per-individual timers: simulate many individuals by many slots per species
     slots: List[Dict] = []
     per_species_slots = max_per_sp  # approximate
@@ -136,18 +158,32 @@ def run(effect_version: int | None = None):
 
     with link:
         link.send_conf(total=total)
-        print("real-run: connected. Ctrl+C to stop. Auto-scheduling kakon and chirps.")
-        next_kakon = schedule_kakon(time.time())
+        using_detector = detector is not None
+        if using_detector:
+            print("real-run: connected. Using external detector (no timer). Ctrl+C to stop.")
+        else:
+            print("real-run: connected. Auto-scheduling kakon and chirps.")
+        next_kakon = schedule_kakon(time.time()) if not using_detector else float("inf")
         state = "IDLE"
         silence_until = 0.0
         try:
             while True:
                 now = time.time()
                 # Handle kakon
-                if state == "IDLE" and now >= next_kakon:
+                event_detected = False
+                if using_detector:
+                    try:
+                        while True:
+                            det_queue.get_nowait()
+                            event_detected = True
+                    except queue.Empty:
+                        pass
+                timer_due = (now >= next_kakon)
+                if state == "IDLE" and (event_detected or timer_due):
                     state = "SILENCE"
                     silence_until = now + max(0.1, float(cfg["wave"].get("pause_ms", 900)) / 1000.0)
-                    next_kakon = schedule_kakon(now)
+                    if not using_detector:
+                        next_kakon = schedule_kakon(now)
                     # play kakon and stop all current sounds
                     if kakon_sound:
                         try:

@@ -23,6 +23,13 @@ python -m src.cli layout_export
 python -m src.cli audio_check
 python -m src.cli config_insects
 
+# 検出（マイク/カメラ）
+python -m src.tools.bell_tester       # 推奨: 丸いインジケータで“鈴検出”を可視化（--no-gui/--no-beep可）
+python -m src.cli detect_watch        # 設定の検出器で波を送信（実機と連携する際）
+python -m src.cli kakon_watch         # カメラ専用（従来）
+python -m src.cli mic_tune            # マイク帯域dBの可視化（閾値チューニング用、ログ出力）
+python -m src.cli detect_tune         # LEDフラッシュ付きチューニング（--ledでシリアル使用、configホットリロード）
+
 # 音圧を均一化（EBU R128 loudnorm、元ファイルはバックアップに退避）
 python -m src.cli audio_normalize --dir assets/data/sound/trimmed --backup assets/data/sound/backup_originals \
   --lufs -16 --tp -1.0 --lra 11 --bitrate 192k
@@ -66,12 +73,29 @@ python -m src.cli colors insect  # 種名を表示しつつ color を実機送�
 - `sim.calm_blue_rgb`: 青い静寂の色（RGB）
 - `sim.calm_hold_s`: 青い静寂の保持時間（秒）
 
+検出（マイク/カメラ/AI）
+- `detect.mode`: `timer` | `mic` | `cam` | `auto`（`timer`は内部スケジューラ、`mic`/`cam`は外部検出で置換）
+- `detect.mic.*`: 入力サンプリング、解析帯域、`threshold_db`/`release_db`、`min_interval_ms`、`device`
+  - 既定はノイズ対策でやや厳しめ（`band_hz: [2000, 9000]`, `threshold_db: -6`, `release_db: -12`, `min_interval_ms: 1800`）
+- `detect.ai.*`: YAMNet TFLite を使ったAI検出設定（`model_path`, `label_map_csv`, `target_labels`, `threshold`, `release`, ほか）
+- `detect.cam.*`: ROI、角度しきい、`min_interval_ms`
+- `fallback_trigger`: 検出が初期化できない場合に `timer` を許可（true/false）
+
 ## 振る舞い（概要）
 
 - IDLE: 虫（100匹×12LED）が“たまに”鳴き、単色の輝度変化で明滅
 - SILENCE: カコンで即ミュート、effect_version に応じた静寂演出
 - WAVE/Calm: 橙波（v1）または青い静寂（v2）が進行/保持
 - RESUME: 鳴きは少数→多数へ徐々に復帰。同時鳴き上限は段階的に増加
+
+検出モードの動作
+- `detect.mode=mic|cam|auto`: 検出イベントが“カコン”の起点になり、内部のタイマーは停止します。
+- `detect.mode=timer`: 従来通り `sim.kakon_mean_s`/`kakon_std_s` による自動スケジュール。
+
+ベルテスター（推奨）
+- `python -m src.tools.bell_tester` を実行すると、丸いインジケータが検出レベルに応じて大きく/赤くなり、検出時にフラッシュ/ビープします。
+- `--no-gui` でGUIを無効化、`--no-beep` でビープ無効。
+- `config.yaml` の `detect.mic.*` は保存でホットリロードされ、その場で調整できます。
 
 ## ミラー送信について
 
@@ -80,3 +104,8 @@ python -m src.cli colors insect  # 種名を表示しつつ color を実機送�
 ## ライセンス
 
 プロジェクト固有の要件に従います。
+AI検出（YAMNet TFLite）
+- 事前に `yamnet.tflite` と `yamnet_class_map.csv` を取得して `assets/models/` に配置してください。
+- `config.yaml` の `detect.mode: ai` を設定し、`detect.ai.model_path`/`label_map_csv`/`target_labels` を確認。
+- 運用は `python -m src.cli detect_watch`（AIでの検出イベントに応じて波を送信）。
+- 依存: `tflite-runtime`, `sounddevice`。

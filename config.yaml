@@ -27,20 +27,36 @@ audio:
 
 # Detection thresholds (camera/mic) – not strictly used in the sim runner
 detect:
+  mode: "mic"                      # 'timer' | 'mic' | 'cam' | 'ai' | 'auto'
   cam:
     roi: [0.55, 0.15, 0.4, 0.7]          # ROI as [x,y,w,h] in 0..1
     angle_fire_deg: -25                   # Angle threshold to fire kakon
     angle_release_deg: -15                # Hysteresis release threshold
     min_interval_ms: 1600                 # Min interval between triggers
   mic:
-    threshold_db: -12                     # Mic peak threshold (dB)
-    min_interval_ms: 1600
+    samplerate: 22050                     # Input sample rate
+    blocksize: 1024                       # Frames per analysis block
+    band_hz: [2000, 9000]                 # Analyze band (Hz) — 少し高めに厳しめ
+    threshold_db: -6                      # Fire threshold on band energy (dBFS) — 厳しめに上げる
+    release_db: -12                       # Release threshold for hysteresis (dBFS)
+    min_interval_ms: 1800                 # Debounce interval between triggers（少し長め）
+    device: null                          # Optional input device name/id
+  ai:
+    model_path: "assets/models/yamnet.tflite"     # Download and place locally
+    label_map_csv: "assets/models/yamnet_class_map.csv"  # Class map CSV for labels
+    target_labels: ["bell", "bells", "jingle", "sleigh"]  # label name substrings (case-insensitive)
+    threshold: 0.6                         # Fire threshold on target class prob
+    release: 0.4                           # Release threshold (hysteresis)
+    min_interval_ms: 1800                  # Debounce interval
+    samplerate: 16000                      # Model input sampling rate
+    blocksize: 1024                        # Audio block size
+    device: null                           # Optional input device
 fallback_trigger: true                    # Allow internal scheduler when detection unavailable
 
 # Simulation + behavior
 sim:
-  kakon_mean_s: 30.0                      # Mean interval (sec) between kakon events
-  kakon_std_s: 2.0                        # Std dev for kakon interval (sec)
+  kakon_mean_s: 8.5                      # Mean interval (sec) between kakon events
+  kakon_std_s: 0.5                        # Std dev for kakon interval (sec)
   kakon_wave_speed_factor: 5.0            # Wave speed multiplier during kakon (effect 1)
   chirp_interval_min_s: 3.0               # Min interval (sec) for an individual to chirp
   chirp_interval_max_s: 12.0              # Max interval (sec) for an individual to chirp
@@ -48,6 +64,6 @@ sim:
   max_concurrent_per_species: 12          # Max simultaneous chirps per species (real runner)
   active_species_count: 2                 # Number of species active at a time (randomly chosen)
   effect_version: 2                       # 1=orange wave, 2=calm blue glow
-  resume_seconds: 6.0                     # Time to ramp back after silence (sec)
+  resume_seconds: 2.0                     # Time to ramp back after silence (sec)
   calm_blue_rgb: [1, 1, 16]               # RGB for calm effect (effect_version 2)
-  calm_hold_s: 5.0                        # Hold calm blue duration after kakon (sec)
+  calm_hold_s: 1.5                        # Hold calm blue duration after kakon (sec)

@@ -13,3 +13,5 @@ matplotlib
 
 # --- Settings Management ---
 PyYAMLnoise
+sounddevice
+tflite-runtime

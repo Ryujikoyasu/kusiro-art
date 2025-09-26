@@ -8,6 +8,7 @@ from .led.serial_link import SerialLink
 from .audio.engine import AudioEngine
 from .sim.viewport import Viewport
 from .util.config import load_config, save_config
+from .detect.factory import build_detector
 
 
 app = typer.Typer(add_completion=False, help="Kushiro insect system CLI")
@@ -92,6 +93,39 @@ def kakon_watch():
                 _run_wave_once(cfg, link)
         except KeyboardInterrupt:
             pass
+
+
+@app.command("detect_watch")
+def detect_watch():
+    """Run configured detector (mic/cam) and send serial wave events."""
+    cfg = load_config()
+    idx = build_u_shape_idx(cfg)
+    link = SerialLink(cfg)
+    det = build_detector(cfg)
+    if det is None:
+        fallback = bool(cfg.get("fallback_trigger", True))
+        mode = cfg.get("detect", {}).get("mode", "timer")
+        raise typer.BadParameter(
+            f"No detector available for mode='{mode}'. Set detect.mode to 'mic' or 'cam'."
+            + (" (fallback_trigger is enabled; use `run` for timer mode.)" if fallback else "")
+        )
+    with link:
+        link.send_conf(total=len(idx))
+        typer.echo("Watching for triggers... Press Ctrl+C to stop")
+        try:
+            for _ in det.watch():
+                typer.echo("Trigger detected -> sending wave")
+                _run_wave_once(cfg, link)
+        except KeyboardInterrupt:
+            pass
+
+
+@app.command("mic_tune")
+def mic_tune(duration: float = typer.Option(0.0, help="Run seconds (0=until Ctrl+C)"),
+             csv: str = typer.Option("", help="Optional path to write samples CSV")):
+    """Live monitor mic high-band dB to help pick thresholds."""
+    from .tools.mic_tuner import run_tuner
+    run_tuner(load_config(), duration=duration, csv_path=csv or None)
 
 
 def _run_wave_once(cfg, link: SerialLink):
@@ -223,6 +257,20 @@ def config_insects():
         sounds = v.get("sound_files", {})
         col = colors.get('color') or colors.get('base')
         typer.echo(f"{key}: color={col} files={sounds}")
+
+
+@app.command("detect_tune")
+def detect_tune(
+    mode: str = typer.Option(None, help="Override detect.mode: mic/cam"),
+    led: bool = typer.Option(False, "--led/--no-led", help="Flash LEDs on detection"),
+):
+    """Tune detector with live feedback and LED flash. Hot-reloads config.yaml while running.
+
+    - mic: shows dB meter + hysteresis and flashes LEDs on detection
+    - cam: listens for events and flashes LEDs on detection
+    """
+    from .tools.detect_tuner import run_detect_tune
+    run_detect_tune(mode=mode, with_led=led)
 
 
 def main():  # python -m src.cli
