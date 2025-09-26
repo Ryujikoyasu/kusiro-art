@@ -181,12 +181,16 @@ class Viewport:
         calm = self.cfg.get("sim", {}).get("calm_blue_rgb", [80, 140, 255])
         self.calm_blue = (int(calm[0]), int(calm[1]), int(calm[2]))
         self.calm_hold_s = float(self.cfg.get("sim", {}).get("calm_hold_s", 5.0))
+        self.disable_calm_blue = bool(self.cfg.get("sim", {}).get("disable_calm_blue", False))
 
         # Audio/light state machine (visualized only)
         state = "IDLE"  # IDLE -> SILENCE -> WAVE -> RESUME -> IDLE
         silence_until = 0.0
         resume_t0 = 0.0
         resume_time = float(self.cfg.get("sim", {}).get("resume_seconds", 6.0))
+        resume_min_gate = float(self.cfg.get("sim", {}).get("resume_min_gate", 0.15))
+        insect_wave_hz = float(self.cfg.get("sim", {}).get("insect_wave_hz", 0.08))
+        insect_wave_phase = float(self.cfg.get("sim", {}).get("insect_wave_phase", 0.0))
 
         # Kakon schedule
         mean_kakon = float(self.cfg.get("sim", {}).get("kakon_mean_s", 8.0))
@@ -293,17 +297,21 @@ class Viewport:
                             )
                             pygame.draw.circle(screen, col, (x, y), 3)
                 else:
-                    # Calm blue glow: hold blue for calm_hold_s (no envelope)
-                    a = 1.0
-                    blue = self.calm_blue
-                    col = (int(blue[0] * a), int(blue[1] * a), int(blue[2] * a))
-                    for i, (x, y) in enumerate(pts):
-                        pygame.draw.circle(screen, col, (x, y), 3)
-                        frame[i] = col
+                    # Calm blue glow: hold blue for calm_hold_s (optional)
+                    if not self.disable_calm_blue:
+                        a = 1.0
+                        blue = self.calm_blue
+                        col = (int(blue[0] * a), int(blue[1] * a), int(blue[2] * a))
+                        for i, (x, y) in enumerate(pts):
+                            pygame.draw.circle(screen, col, (x, y), 3)
+                            frame[i] = col
                 if pos01 >= 1.0:
                     wave_running = False
                     state = "RESUME"
                     resume_t0 = now
+                    # Re-seed next chirp times near-future so it doesn't stay silent
+                    for insect in self.insects:
+                        insect["next_t"] = now + random.uniform(0.1, 1.0)
             else:
                 # Insect-driven blinking (no background when idle). Off in SILENCE/WAVE.
                 if state == "RESUME":
@@ -323,13 +331,24 @@ class Viewport:
 
                 # Limit concurrent chirps overall and per species; during RESUME grow gradually
                 total_active = sum(1 for ins in self.insects if ins["active"])
-                allowed_total = self.max_concurrent_total if state == "IDLE" else max(1, int(self.max_concurrent_total * max(0.1, amp_gate)))
+                # Wave-like modulation of allowed totals
+                wave_mod = 1.0
+                if insect_wave_hz > 0.0:
+                    wave_mod = 0.7 + 0.3 * math.sin(2 * math.pi * insect_wave_hz * (now if state == "IDLE" else (now - resume_t0)) + insect_wave_phase)
+                    wave_mod = max(0.4, min(1.0, wave_mod))
+                if state == "IDLE":
+                    allowed_total = max(1, int(self.max_concurrent_total * wave_mod))
+                else:
+                    allowed_total = max(1, int(self.max_concurrent_total * max(resume_min_gate, amp_gate) * wave_mod))
                 # per-species counts
                 counts_by_sp: Dict[str, int] = {}
                 for ins in self.insects:
                     if ins["active"]:
                         counts_by_sp[ins["sp_key"]] = counts_by_sp.get(ins["sp_key"], 0) + 1
-                allowed_per_sp = self.max_concurrent_per_species if state == "IDLE" else max(1, int(self.max_concurrent_per_species * max(0.1, amp_gate)))
+                if state == "IDLE":
+                    allowed_per_sp = max(1, int(self.max_concurrent_per_species * wave_mod))
+                else:
+                    allowed_per_sp = max(1, int(self.max_concurrent_per_species * max(resume_min_gate, amp_gate) * wave_mod))
 
                 for insect in self.insects:
                     # Schedule chirps (occasional)
@@ -350,7 +369,10 @@ class Viewport:
                             if snd:
                                 ch = pygame.mixer.find_channel(True)
                                 if ch:
-                                    ch.set_volume(min(1.0, self.master_amp))
+                                    # Volume increases with number of active insects; quieter during RESUME
+                                    vol_factor = 0.3 + 0.7 * (total_active / float(max(1, self.max_concurrent_total)))
+                                    vol = max(0.0, min(1.0, self.master_amp * (vol_factor * (amp_gate if state == "RESUME" else 1.0))))
+                                    ch.set_volume(vol)
                                     ch.play(snd, maxtime=int(period * 1000))
                                     self.active_channels.append(ch)
 
@@ -448,3 +470,195 @@ class Viewport:
         x = np.clip(x, -1.0, 1.0)
         xi16 = (x * 32767).astype(np.int16)
         return sndarray.make_sound(xi16)
+
+    def run_ambient_simulation(self,
+                               species_count: int = 2,
+                               change_interval: float = 60.0,
+                               wave_seconds: float = 20.0,
+                               max_total_override: int | None = None,
+                               max_per_species_override: int | None = None,
+                               interval_scale: float = 1.0):
+        import math
+        pygame.init()
+        screen = pygame.display.set_mode((self.view_w, self.view_h))
+        clock = pygame.time.Clock()
+
+        # Precompute pixel positions
+        pts = [self._pos_for_index(e) for e in self.idx]
+
+        # Build insects (LED groups) same as run_simulation
+        group_size = 12
+        insects = []
+        species_keys = list(self.insect_params.keys()) or [
+            "aomatsumushi",
+            "kutsuwa",
+            "matsumushi",
+            "umaoi",
+            "koorogi",
+            "kirigirisu",
+            "suzumushi",
+        ]
+        for g in range(self.total_leds // group_size):
+            start = g * group_size
+            end = start + group_size
+            sp_key = species_keys[g % len(species_keys)]
+            colors = self.insect_params.get(sp_key, {}).get("colors", {})
+            base = tuple(int(x) for x in (colors.get("color") or colors.get("base", [200, 200, 200])))
+            pattern = self.insect_params.get(sp_key, {}).get("chirp_pattern", {}).get("default", [])
+            duration = 0.0
+            if pattern:
+                duration = float(pattern[-1][0])
+            else:
+                pattern = [(0.0, 1.0), (0.2, 0.0)]
+                duration = 0.2
+            sim_cfg = self.cfg.get("sim", {})
+            chirp_min = float(sim_cfg.get("chirp_interval_min_s", 3.0)) * max(0.05, float(interval_scale))
+            chirp_max = float(sim_cfg.get("chirp_interval_max_s", 12.0)) * max(0.05, float(interval_scale))
+            insects.append({
+                "indices": list(range(start, end)),
+                "sp_key": sp_key,
+                "color": base,
+                "pattern": pattern,
+                "period": duration or 0.2,
+                "active": False,
+                "start_t": 0.0,
+                "next_t": time.time() + random.uniform(chirp_min, chirp_max),
+                "chirp_min": chirp_min,
+                "chirp_max": chirp_max,
+            })
+
+        # Concurrency limits from config
+        sim_cfg2 = self.cfg.get("sim", {})
+        if "max_concurrent_chirps" in sim_cfg2:
+            max_concurrent_total = int(sim_cfg2.get("max_concurrent_chirps", 12))
+        else:
+            max_concurrent_total = int(sim_cfg2.get("max_concurrent_total", 24))
+        max_concurrent_per_species = int(sim_cfg2.get("max_concurrent_per_species", 12))
+        if isinstance(max_total_override, int) and max_total_override > 0:
+            max_concurrent_total = max_total_override
+        if isinstance(max_per_species_override, int) and max_per_species_override > 0:
+            max_concurrent_per_species = max_per_species_override
+
+        # Active species selection and rotation
+        species_count = max(1, int(species_count))
+        species_count = min(species_count, len(species_keys))
+        current_species_set = set(random.sample(species_keys, species_count))
+        next_change_at = time.time() + max(1.0, float(change_interval))
+
+        running = True
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+
+            now = time.time()
+            # Rotate species set
+            if now >= next_change_at:
+                current_species_set = set(random.sample(species_keys, species_count))
+                next_change_at = now + max(1.0, float(change_interval))
+
+            # LFO for 10s volume/concurrency wave
+            phase = (now % max(0.1, float(wave_seconds))) / max(0.1, float(wave_seconds))
+            amp = 0.2 + 0.8 * (0.5 * (1.0 + math.sin(2 * math.pi * phase)))  # 0.2..1.0
+
+            screen.fill((10, 10, 10))
+            frame = np.zeros((self.total_leds, 3), dtype=np.uint8)
+
+            # Compute allowed totals
+            total_active = sum(1 for ins in insects if ins["active"])
+            allowed_total = max(1, int(max_concurrent_total * amp))
+            counts_by_sp: Dict[str, int] = {}
+            for ins in insects:
+                if ins["active"]:
+                    counts_by_sp[ins["sp_key"]] = counts_by_sp.get(ins["sp_key"], 0) + 1
+            allowed_per_sp = max(1, int(max_concurrent_per_species * amp))
+
+            # Schedule chirps
+            started_this_tick = 0
+            for ins in insects:
+                if not ins["active"] and now >= ins["next_t"] and (ins["sp_key"] in current_species_set):
+                    sp = ins["sp_key"]
+                    if (total_active + started_this_tick) >= allowed_total or counts_by_sp.get(sp, 0) >= allowed_per_sp:
+                        ins["next_t"] = now + random.uniform(ins["chirp_min"], ins["chirp_max"]) * 0.3
+                    else:
+                        ins["active"] = True
+                        ins["start_t"] = now
+                        period = max(0.1, ins["period"]) if ins["period"] else 0.2
+                        ins["next_t"] = now + random.uniform(ins["chirp_min"], ins["chirp_max"]) + period
+                        started_this_tick += 1
+                        counts_by_sp[sp] = counts_by_sp.get(sp, 0) + 1
+                        # Sound
+                        snd = self.species_sounds.get(sp) if self.species_sounds else None
+                        if snd:
+                            ch = pygame.mixer.find_channel(True)
+                            if ch:
+                                density = min(1.0, (total_active / float(max(1, max_concurrent_total))))
+                                vol = max(0.0, min(1.0, self.master_amp * (0.2 + 0.8 * (0.5 * amp + 0.5 * density))))
+                                ch.set_volume(vol)
+                                ch.play(snd, maxtime=int(period * 1000))
+
+            # Draw active insects
+            for ins in insects:
+                if ins["active"]:
+                    t_local = now - ins["start_t"]
+                    pat = ins["pattern"]
+                    period = max(0.1, ins["period"]) if ins["period"] else 0.2
+                    level = 0.0
+                    for i_seg in range(len(pat) - 1):
+                        t0, v0 = pat[i_seg]
+                        t1, v1 = pat[i_seg + 1]
+                        if t_local < t0:
+                            break
+                        if t0 <= t_local <= t1:
+                            if t1 > t0:
+                                a = (t_local - t0) / (t1 - t0)
+                                level = v0 + (v1 - v0) * a
+                            else:
+                                level = v1
+                            break
+                        level = v1
+                    if t_local >= period:
+                        ins["active"] = False
+                        level = 0.0
+
+                    if level > 0.0:
+                        lv = max(0.0, min(1.0, float(level) * amp))
+                        col = (
+                            int(ins["color"][0] * lv),
+                            int(ins["color"][1] * lv),
+                            int(ins["color"][2] * lv),
+                        )
+                        for led_i in ins["indices"]:
+                            x, y = pts[led_i]
+                            pygame.draw.circle(screen, col, (x, y), 3)
+                            frame[led_i] = col
+
+            # Mirror to device
+            if self.serial_thread is not None:
+                try:
+                    num_pixels = (self.total_leds + 2) // 3
+                    pixel_buf = frame[:num_pixels]
+                    self.serial_thread.send(pixel_buf)
+                except Exception:
+                    pass
+
+            # HUD: species rotation progress and LFO
+            rem = max(0.0, next_change_at - now)
+            bar_w = int(self.view_w * max(0.0, min(1.0, 1.0 - rem / max(1.0, float(change_interval)))))
+            pygame.draw.rect(screen, (80, 160, 255), (0, 0, bar_w, 6))
+            # Indicator of amp
+            amp_w = int(self.view_w * amp)
+            pygame.draw.rect(screen, (255, 165, 0), (0, 8, amp_w, 4))
+
+            pygame.display.flip()
+            clock.tick(60)
+
+        # On exit: send BLACK and close serial
+        if self.serial_thread is not None:
+            try:
+                self.serial_thread.send(np.zeros(((self.total_leds + 2)//3, 3), dtype=np.uint8))
+                time.sleep(0.1)
+                self.serial_thread.close()
+            except Exception:
+                pass
+        pygame.quit()

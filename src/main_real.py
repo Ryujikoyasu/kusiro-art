@@ -113,6 +113,11 @@ def run(effect_version: int | None = None):
     std_kakon = float(simcfg.get("kakon_std_s", 2.0))
     calm_blue = tuple(int(x) for x in simcfg.get("calm_blue_rgb", [80, 140, 255]))
     calm_hold = float(simcfg.get("calm_hold_s", 5.0))
+    disable_calm_blue = bool(simcfg.get("disable_calm_blue", False))
+    resume_time = float(simcfg.get("resume_seconds", 6.0))
+    resume_min_gate = float(simcfg.get("resume_min_gate", 0.15))
+    insect_wave_hz = float(simcfg.get("insect_wave_hz", 0.08))
+    insect_wave_phase = float(simcfg.get("insect_wave_phase", 0.0))
 
     species_keys = list(insect_params.keys()) or [
         "aomatsumushi", "kutsuwa", "matsumushi", "umaoi", "koorogi", "kirigirisu", "suzumushi",
@@ -166,9 +171,15 @@ def run(effect_version: int | None = None):
         next_kakon = schedule_kakon(time.time()) if not using_detector else float("inf")
         state = "IDLE"
         silence_until = 0.0
+        # Track active chirps to estimate concurrent insects (for volume and gating)
+        active_chirps: List[Dict] = []  # {sp, end}
+
         try:
             while True:
                 now = time.time()
+                # prune finished chirps
+                if active_chirps:
+                    active_chirps = [c for c in active_chirps if c.get("end", 0.0) > now]
                 # Handle kakon
                 event_detected = False
                 if using_detector:
@@ -210,33 +221,45 @@ def run(effect_version: int | None = None):
                                 break
                             time.sleep(1 / 60.0)
                     else:
-                        # Calm blue glow: fill blue, hold, then black
-                        for i in range(total):
-                            link.set_pixel(i, calm_blue[0], calm_blue[1], calm_blue[2])
-                        time.sleep(calm_hold)
-                        link.black()
+                        # Calm blue glow: fill blue, hold, then black (optional)
+                        if not disable_calm_blue:
+                            for i in range(total):
+                                link.set_pixel(i, calm_blue[0], calm_blue[1], calm_blue[2])
+                            time.sleep(calm_hold)
+                            link.black()
                     # pick new N species for next session
                     current_species = set(random.sample(species_keys, min(active_species_count, len(species_keys))))
                     state = "RESUME"
                     resume_t0 = time.time()
+                    # Re-seed next times closer so we don't stay silent for long
+                    for s in slots:
+                        s["next"] = now + random.uniform(0.1, 1.0)
                 # During RESUME/IDLE: schedule chirps
                 if state in ("RESUME", "IDLE"):
                     # ramp concurrent limits during RESUME
                     if state == "RESUME":
-                        gate = min(1.0, (now - resume_t0) / 2.0)
+                        gate = max(0.0, min(1.0, (now - resume_t0) / max(0.1, resume_time)))
                     else:
                         gate = 1.0
-                    allowed_total = max(1, int(max_total * max(0.1, gate)))
-                    allowed_per_sp = max(1, int(max_per_sp * max(0.1, gate)))
+                    # wave-like modulation over time
+                    wave_mod = 1.0
+                    if insect_wave_hz > 0.0:
+                        wave_mod = 0.7 + 0.3 * __import__("math").sin(2 * __import__("math").pi * insect_wave_hz * (now if state == "IDLE" else (now - resume_t0)) + insect_wave_phase)
+                        wave_mod = max(0.4, min(1.0, wave_mod))
+
+                    if state == "IDLE":
+                        allowed_total = max(1, int(max_total * wave_mod))
+                        allowed_per_sp = max(1, int(max_per_sp * wave_mod))
+                    else:
+                        allowed_total = max(1, int(max_total * max(resume_min_gate, gate) * wave_mod))
+                        allowed_per_sp = max(1, int(max_per_sp * max(resume_min_gate, gate) * wave_mod))
 
                     # count current active by species
                     counts = {k: 0 for k in species_keys}
-                    try:
-                        # pygame doesn't expose active count easily; approximate by tracking recent starts
-                        # We'll just enforce starts against allowed counts.
-                        pass
-                    except Exception:
-                        pass
+                    for c in active_chirps:
+                        sp = c.get("sp")
+                        if sp in counts:
+                            counts[sp] += 1
                     # schedule starts
                     started_this_tick = 0
                     for s in slots:
@@ -247,7 +270,8 @@ def run(effect_version: int | None = None):
                         if started_this_tick > 8:  # throttle starts per frame
                             break
                         # evaluate current totals by scanning channels (approx: do nothing, rely on allowed_total)
-                        if started_this_tick >= allowed_total:
+                        total_active_now = len(active_chirps) + started_this_tick
+                        if total_active_now >= allowed_total:
                             break
                         if counts.get(s["sp"], 0) >= allowed_per_sp:
                             s["next"] = now + random.uniform(chirp_min, chirp_max)
@@ -257,10 +281,16 @@ def run(effect_version: int | None = None):
                         if snd:
                             ch = pygame.mixer.find_channel(True)
                             if ch:
-                                ch.set_volume(min(1.0, master_amp))
-                                ch.play(snd, maxtime=int(max(0.1, s["period"]) * 1000))
+                                # Volume increases with number of active insects; quieter during RESUME
+                                vol_factor = 0.3 + 0.7 * (min(1.0, (len(active_chirps) / float(max(1, max_total)))))
+                                if state == "RESUME":
+                                    vol_factor *= max(resume_min_gate, gate)
+                                ch.set_volume(max(0.0, min(1.0, master_amp * vol_factor)))
+                                dur_ms = int(max(0.1, s["period"]) * 1000)
+                                ch.play(snd, maxtime=dur_ms)
                                 counts[s["sp"]] = counts.get(s["sp"], 0) + 1
                                 started_this_tick += 1
+                                active_chirps.append({"sp": s["sp"], "end": now + max(0.1, s["period"])})
                         s["next"] = now + random.uniform(chirp_min, chirp_max)
                 time.sleep(0.02)
         except KeyboardInterrupt:

@@ -62,7 +62,7 @@ sim:
   chirp_interval_max_s: 12.0              # Max interval (sec) for an individual to chirp
   max_concurrent_total: 24                # Max simultaneous chirps overall (real runner)
   max_concurrent_per_species: 12          # Max simultaneous chirps per species (real runner)
-  active_species_count: 2                 # Number of species active at a time (randomly chosen)
+  active_species_count: 3                 # Number of species active at a time (randomly chosen)
   effect_version: 2                       # 1=orange wave, 2=calm blue glow
   resume_seconds: 2.0                     # Time to ramp back after silence (sec)
   calm_blue_rgb: [1, 1, 16]               # RGB for calm effect (effect_version 2)

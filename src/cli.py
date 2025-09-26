@@ -9,6 +9,7 @@ from .audio.engine import AudioEngine
 from .sim.viewport import Viewport
 from .util.config import load_config, save_config
 from .detect.factory import build_detector
+from .sim.viewport import Viewport
 
 
 app = typer.Typer(add_completion=False, help="Kushiro insect system CLI")
@@ -147,12 +148,16 @@ def show(
     simulate: bool = typer.Option(True, "--simulate/--no-simulate"),
     version: int = typer.Option(None, "--version", help="Effect version: 1=orange wave, 2=calm blue"),
     mirror: bool = typer.Option(False, "--mirror", help="Mirror frames to device via MAGIC_BYTE"),
+    no_calm_blue: bool = typer.Option(False, "--no-calm-blue", help="Disable calm blue after kakon (visual only)"),
 ):
     """Show the U-shape layout and simulate wave (version 1 or 2)."""
     cfg = load_config()
     if version is not None:
         cfg.setdefault("sim", {})
         cfg["sim"]["effect_version"] = int(version)
+    if no_calm_blue:
+        cfg.setdefault("sim", {})
+        cfg["sim"]["disable_calm_blue"] = True
     idx = build_u_shape_idx(cfg)
     vp = Viewport(cfg, idx, mirror_to_device=mirror)
     vp.run_simulation()
@@ -197,6 +202,35 @@ def black():
     with link:
         link.black()
     typer.echo("BLACK sent.")
+
+
+@app.command()
+def ambient(
+    species_count: int = typer.Option(2, "--species", help="Number of species active at once"),
+    change_interval: float = typer.Option(60.0, "--change-interval", help="Seconds between species rotation"),
+    wave_seconds: float = typer.Option(20.0, "--wave-seconds", help="Seconds per volume wave cycle"),
+    density: float = typer.Option(1.0, "--density", min=0.1, max=5.0, help=">1: more individuals and chirps; <1: fewer"),
+    mirror: bool = typer.Option(False, "--mirror", help="Mirror frames to device via MAGIC_BYTE"),
+):
+    """Ambient simulation: 10s volume waves, rotate species every 60s, with window and optional mirroring."""
+    cfg = load_config()
+    idx = build_u_shape_idx(cfg)
+    vp = Viewport(cfg, idx, mirror_to_device=mirror)
+    # Scale concurrency and intervals with density
+    density = max(0.1, float(density))
+    # Base from config
+    simcfg = cfg.get("sim", {})
+    base_total = int(simcfg.get("max_concurrent_total", simcfg.get("max_concurrent_chirps", 24)))
+    base_per = int(simcfg.get("max_concurrent_per_species", 12))
+    max_total_override = max(1, int(round(base_total * density)))
+    max_per_species_override = max(1, int(round(base_per * density)))
+    interval_scale = 1.0 / density  # more density -> shorter intervals
+    vp.run_ambient_simulation(species_count=max(1, int(species_count)),
+                              change_interval=max(1.0, float(change_interval)),
+                              wave_seconds=max(0.5, float(wave_seconds)),
+                              max_total_override=max_total_override,
+                              max_per_species_override=max_per_species_override,
+                              interval_scale=interval_scale)
 
 
 @colors_app.command("pick")
