@@ -23,28 +23,18 @@ python -m src.cli layout_export
 python -m src.cli audio_check
 python -m src.cli config_insects
 
-# 検出（マイク/カメラ）
-python -m src.tools.bell_tester       # 推奨: 丸いインジケータで“鈴検出”を可視化（--no-gui/--no-beep可）
-python -m src.cli detect_watch        # 設定の検出器で波を送信（実機と連携する際）
-python -m src.cli kakon_watch         # カメラ専用（従来）
-python -m src.cli mic_tune            # マイク帯域dBの可視化（閾値チューニング用、ログ出力）
-python -m src.cli detect_tune         # LEDフラッシュ付きチューニング（--ledでシリアル使用、configホットリロード）
-
 # 音圧を均一化（EBU R128 loudnorm、元ファイルはバックアップに退避）
-python -m src.cli audio_normalize --dir assets/data/sound/trimmed --backup assets/data/sound/backup_originals \
+python -m src.cli audio_normalize --dir assets/data/sound/trimmed --backup assets/data/sound/backup_originals \\
   --lufs -16 --tp -1.0 --lra 11 --bitrate 192k
 
-# シミュレーション（画面表示のみ / 実機ミラー送信あり）
-python -m src.cli show --version 1         # 橙の波
-python -m src.cli show --version 2         # 青い静寂
-python -m src.cli show --version 2 --mirror  # 画面と同じフレームを実機送信（MAGIC 0x7E）
+# アンビエント（画面表示＋実機ミラー送信対応）
+python -m src.cli ambient --mirror            # 画面と同じフレームを実機送信（MAGIC 0x7E）
 
-# 実機ランナー（自動カコン・音・LED）
-python -m src.cli run --version 1
-python -m src.cli run --version 2
+# アンビエント録音（WAVファイルへ）
+python -m src.cli ambient_record --out recordings/ambient.wav \
+  --seconds 120 --species 3 --change-interval 60 --wave-seconds 20 --density 1.0
 
-# 手動トリガ／全消灯
-python -m src.cli trigger_once
+# 全消灯
 python -m src.cli black
 
 # 色ツール（MAGIC 0x7E フレーム）
@@ -58,20 +48,10 @@ python -m src.cli colors insect  # 種名を表示しつつ color を実機送�
 - `baud`: 通信速度（スケッチと一致）
 - `leds_per_meter`: LED 本数/メートル（60 推奨）
 - `segments_m`: U字の区間長（left/bottom/right）
-- `wave.speed_mps`: 波の伝播速度（version 1）
-- `wave.tail_m`: 波の余韻長（m）
-- `wave.pause_ms`: カコン検出後、波開始までの無音時間（ms）
 - `audio.gain_master`: 全体ゲイン（dB）
-- `sim.kakon_mean_s`/`kakon_std_s`: カコンの平均間隔/分散（秒）
-- `sim.kakon_wave_speed_factor`: カコン時の波速度倍率（version 1）
 - `sim.chirp_interval_min_s`/`max_s`: 個体の鳴き間隔範囲（秒）
 - `sim.max_concurrent_total`: 同時鳴き上限（全体）
 - `sim.max_concurrent_per_species`: 同時鳴き上限（種別）
-- `sim.active_species_count`: カコンごとに有効化する種数（ランダム選定）
-- `sim.effect_version`: 1=橙の波, 2=青い静寂
-- `sim.resume_seconds`: 静寂後の復帰にかける時間（秒）
-- `sim.calm_blue_rgb`: 青い静寂の色（RGB）
-- `sim.calm_hold_s`: 青い静寂の保持時間（秒）
 
 検出（マイク/カメラ/AI）
 - `detect.mode`: `timer` | `mic` | `cam` | `auto`（`timer`は内部スケジューラ、`mic`/`cam`は外部検出で置換）
@@ -88,18 +68,16 @@ python -m src.cli colors insect  # 種名を表示しつつ color を実機送�
 - WAVE/Calm: 橙波（v1）または青い静寂（v2）が進行/保持
 - RESUME: 鳴きは少数→多数へ徐々に復帰。同時鳴き上限は段階的に増加
 
-検出モードの動作
-- `detect.mode=mic|cam|auto`: 検出イベントが“カコン”の起点になり、内部のタイマーは停止します。
-- `detect.mode=timer`: 従来通り `sim.kakon_mean_s`/`kakon_std_s` による自動スケジュール。
+（検出器関連ツールは削除済み）
 
-ベルテスター（推奨）
-- `python -m src.tools.bell_tester` を実行すると、丸いインジケータが検出レベルに応じて大きく/赤くなり、検出時にフラッシュ/ビープします。
-- `--no-gui` でGUIを無効化、`--no-beep` でビープ無効。
-- `config.yaml` の `detect.mic.*` は保存でホットリロードされ、その場で調整できます。
+録音について
+- `ambient_record` はアンビエントのスケジューラをヘッドレスで実行し、虫の音をミックスして WAV に書き出します。
+- パラメータは `ambient` と同様（`--species`, `--change-interval`, `--wave-seconds`, `--density`）。
+- 出力先は `--out`、長さは `--seconds` で指定できます（既定 60 秒）。
 
 ## ミラー送信について
 
-`--mirror` 付きシミュレーションは、画面に描画した LED カラーをそのまま `MAGIC_BYTE(0x7E)` フレームで実機へ送信します。スケッチは 1ピクセル=3物理LED の展開で描画します。
+`--mirror` 付きアンビエントは、画面に描画した LED カラーをそのまま `MAGIC_BYTE(0x7E)` フレームで実機へ送信します。スケッチは 1ピクセル=3物理LED の展開で描画します。
 
 ## ライセンス
 

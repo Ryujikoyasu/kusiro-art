@@ -8,8 +8,6 @@ from .led.serial_link import SerialLink
 from .audio.engine import AudioEngine
 from .sim.viewport import Viewport
 from .util.config import load_config, save_config
-from .detect.factory import build_detector
-from .sim.viewport import Viewport
 
 
 app = typer.Typer(add_completion=False, help="Kushiro insect system CLI")
@@ -76,122 +74,8 @@ def audio_normalize(
     typer.echo(f"Normalized mp3s in {directory}. Backups in {backup}.")
 
 
-@app.command()
-def kakon_watch():
-    """Run camera-based kakon detector and send serial wave events."""
-    from .detect.kakon_cam import KakomCameraDetector
-
-    cfg = load_config()
-    idx = build_u_shape_idx(cfg)
-    link = SerialLink(cfg)
-    det = KakomCameraDetector(cfg)
-    with link:
-        link.send_conf(total=len(idx))
-        typer.echo("Watching for kakon... Press Ctrl+C to stop")
-        try:
-            for _ in det.watch():
-                typer.echo("Trigger detected -> sending wave")
-                _run_wave_once(cfg, link)
-        except KeyboardInterrupt:
-            pass
-
-
-@app.command("detect_watch")
-def detect_watch():
-    """Run configured detector (mic/cam) and send serial wave events."""
-    cfg = load_config()
-    idx = build_u_shape_idx(cfg)
-    link = SerialLink(cfg)
-    det = build_detector(cfg)
-    if det is None:
-        fallback = bool(cfg.get("fallback_trigger", True))
-        mode = cfg.get("detect", {}).get("mode", "timer")
-        raise typer.BadParameter(
-            f"No detector available for mode='{mode}'. Set detect.mode to 'mic' or 'cam'."
-            + (" (fallback_trigger is enabled; use `run` for timer mode.)" if fallback else "")
-        )
-    with link:
-        link.send_conf(total=len(idx))
-        typer.echo("Watching for triggers... Press Ctrl+C to stop")
-        try:
-            for _ in det.watch():
-                typer.echo("Trigger detected -> sending wave")
-                _run_wave_once(cfg, link)
-        except KeyboardInterrupt:
-            pass
-
-
-@app.command("mic_tune")
-def mic_tune(duration: float = typer.Option(0.0, help="Run seconds (0=until Ctrl+C)"),
-             csv: str = typer.Option("", help="Optional path to write samples CSV")):
-    """Live monitor mic high-band dB to help pick thresholds."""
-    from .tools.mic_tuner import run_tuner
-    run_tuner(load_config(), duration=duration, csv_path=csv or None)
-
-
-def _run_wave_once(cfg, link: SerialLink):
-    speed = float(cfg["wave"]["speed_mps"])  # m/s
-    total_m = sum(cfg["segments_m"].values())
-    duration = total_m / speed
-    t0 = time.time()
-    while True:
-        t = time.time() - t0
-        pos = min(1.0, t / duration)
-        link.send_wave(pos=pos, tail_m=float(cfg["wave"]["tail_m"]), bright=200)
-        if pos >= 1.0:
-            break
-        time.sleep(1 / 60.0)
-
-
-@app.command()
-def show(
-    simulate: bool = typer.Option(True, "--simulate/--no-simulate"),
-    version: int = typer.Option(None, "--version", help="Effect version: 1=orange wave, 2=calm blue"),
-    mirror: bool = typer.Option(False, "--mirror", help="Mirror frames to device via MAGIC_BYTE"),
-    no_calm_blue: bool = typer.Option(False, "--no-calm-blue", help="Disable calm blue after kakon (visual only)"),
-):
-    """Show the U-shape layout and simulate wave (version 1 or 2)."""
-    cfg = load_config()
-    if version is not None:
-        cfg.setdefault("sim", {})
-        cfg["sim"]["effect_version"] = int(version)
-    if no_calm_blue:
-        cfg.setdefault("sim", {})
-        cfg["sim"]["disable_calm_blue"] = True
-    idx = build_u_shape_idx(cfg)
-    vp = Viewport(cfg, idx, mirror_to_device=mirror)
-    vp.run_simulation()
-
-
-@app.command()
-def run(version: int = typer.Option(None, "--version", help="Effect version: 1=orange wave, 2=calm blue")):
-    """Run real control (auto kakon + serial + audio), versioned effect."""
-    from .main_real import run as run_real
-    run_real(effect_version=version)
-
-
-@app.command()
-def trigger_once():
-    """Send a single wave immediately to the device (manual trigger)."""
-    cfg = load_config()
-    idx = build_u_shape_idx(cfg)
-    link = SerialLink(cfg)
-    total = len(idx)
-    speed = float(cfg["wave"]["speed_mps"])  # m/s
-    total_m = sum(cfg["segments_m"].values())
-    duration = total_m / max(1e-6, speed)
-    tail_m = float(cfg["wave"]["tail_m"])  # m
-    with link:
-        link.send_conf(total=total)
-        t0 = time.time()
-        while True:
-            t = time.time() - t0
-            pos = min(1.0, t / duration)
-            link.send_wave(pos=pos, tail_m=tail_m, bright=220)
-            if pos >= 1.0:
-                break
-            time.sleep(1 / 60.0)
-    typer.echo("Wave completed.")
+    #
+    # Detection-related commands removed.
 
 
 @app.command()
@@ -206,7 +90,7 @@ def black():
 
 @app.command()
 def ambient(
-    species_count: int = typer.Option(2, "--species", help="Number of species active at once"),
+    species_count: int = typer.Option(3, "--species", help="Number of species active at once (default 3)"),
     change_interval: float = typer.Option(60.0, "--change-interval", help="Seconds between species rotation"),
     wave_seconds: float = typer.Option(20.0, "--wave-seconds", help="Seconds per volume wave cycle"),
     density: float = typer.Option(1.0, "--density", min=0.1, max=5.0, help=">1: more individuals and chirps; <1: fewer"),
@@ -231,6 +115,27 @@ def ambient(
                               max_total_override=max_total_override,
                               max_per_species_override=max_per_species_override,
                               interval_scale=interval_scale)
+
+
+@app.command("ambient_record")
+def ambient_record(
+    out: Path = typer.Option(Path("recordings/ambient.wav"), "--out", help="Output WAV path"),
+    seconds: float = typer.Option(60.0, "--seconds", help="Record duration (sec)"),
+    species_count: int = typer.Option(3, "--species", help="Number of species active at once (default 3)"),
+    change_interval: float = typer.Option(60.0, "--change-interval", help="Seconds between species rotation"),
+    wave_seconds: float = typer.Option(20.0, "--wave-seconds", help="Seconds per volume wave cycle"),
+    density: float = typer.Option(1.0, "--density", min=0.1, max=5.0, help=">1: more individuals and chirps; <1: fewer"),
+):
+    """Record ambient insect audio to a WAV file (headless)."""
+    from .tools.ambient_recorder import run_record
+    typer.echo(f"Recording ambient for {int(seconds)}s to {out} ...")
+    path = run_record(out_path=out,
+                      seconds=max(1.0, float(seconds)),
+                      species_count=max(1, int(species_count)),
+                      change_interval_s=max(1.0, float(change_interval)),
+                      wave_seconds=max(0.5, float(wave_seconds)),
+                      density=max(0.1, float(density)))
+    typer.echo(f"Recorded to {path}")
 
 
 @colors_app.command("pick")
@@ -293,18 +198,7 @@ def config_insects():
         typer.echo(f"{key}: color={col} files={sounds}")
 
 
-@app.command("detect_tune")
-def detect_tune(
-    mode: str = typer.Option(None, help="Override detect.mode: mic/cam"),
-    led: bool = typer.Option(False, "--led/--no-led", help="Flash LEDs on detection"),
-):
-    """Tune detector with live feedback and LED flash. Hot-reloads config.yaml while running.
-
-    - mic: shows dB meter + hysteresis and flashes LEDs on detection
-    - cam: listens for events and flashes LEDs on detection
-    """
-    from .tools.detect_tuner import run_detect_tune
-    run_detect_tune(mode=mode, with_led=led)
+    # Detection tuner removed.
 
 
 def main():  # python -m src.cli
